@@ -31,7 +31,7 @@ HEADERS = {
     "Referer": "https://www.fahasa.com/",
 }
 
-CATEGORY_URL_TEMPLATE = "https://www.fahasa.com/sach-trong-nuoc/van-hoc-trong-nuoc/light-novel.html?order=num_orders&limit=24&p={page}"
+CATEGORY_URL_TEMPLATE = "https://www.fahasa.com/sach-trong-nuoc/van-hoc-trong-nuoc/sach-to-mau-danh-cho-nguoi-lon.html?order=num_orders&limit=24&p={page}"
 MAX_PAGES_TO_CRAWL = 10
 
 
@@ -378,7 +378,7 @@ def main():
             time.sleep(random.uniform(3, 5))
 
         # Lưu kết quả trung gian sau mỗi trang
-        output_filename = f"crawled_books_light_novel__page_{page}.json"
+        output_filename = f"crawled_books_sach_to_mau_danh_cho_nguoi_lon_page_{page}.json"
         with open(output_filename, "w", encoding="utf-8") as f:
             json.dump(all_books_data, f, indent=4, ensure_ascii=False)
         print(f"Đã lưu kết quả trung gian vào '{output_filename}'")
@@ -403,7 +403,7 @@ def main():
     driver.quit()
 
     # Lưu kết quả cuối cùng
-    final_output_filename = "crawled_books_light_novel.json"
+    final_output_filename = "crawled_books_sach_to_mau_danh_cho_nguoi_lon.json"
     with open(final_output_filename, "w", encoding="utf-8") as f:
         json.dump(all_books_data, f, indent=4, ensure_ascii=False)
 
