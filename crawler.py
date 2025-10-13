@@ -378,7 +378,9 @@ def main():
             time.sleep(random.uniform(3, 5))
 
         # Lưu kết quả trung gian sau mỗi trang
-        output_filename = f"crawled_books_du_ky_page_{page}.json"
+        output_filename = (
+            f"crawled_books_sach_to_mau_danh_cho_nguoi_lon_page_{page}.json"
+        )
         with open(output_filename, "w", encoding="utf-8") as f:
             json.dump(all_books_data, f, indent=4, ensure_ascii=False)
         print(f"Đã lưu kết quả trung gian vào '{output_filename}'")
