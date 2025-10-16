@@ -13,7 +13,7 @@ BATCH_SIZE = 24
 
 # Danh sách file JSON cụ thể để import
 JSON_FILES = [
-    "crawled_books_chinh_tri.json",
+    "crawled_books_kien_thuc_kns_cho_tre.json",
     # Thêm file khác nếu cần, ví dụ: "crawled_books_van_hoc.json"
 ]
 

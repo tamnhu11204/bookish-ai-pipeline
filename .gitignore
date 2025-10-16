@@ -1,0 +1,7 @@
+# Ignore local env and vector db
+ai_service/venv/
+ai_service/chroma_db/
+*.sqlite3
+*.dll
+*.lib
+*.pyd

@@ -9,12 +9,12 @@ from pymongo.errors import ConnectionFailure, DuplicateKeyError
 # --- CẤU HÌNH ---
 MONGODB_URI = "mongodb+srv://tamnhu11204:nhunguyen11204@cluster0.kezkc.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 DB_NAME = "test"
-JSON_DIR = "./"
+JSON_DIR = "./imported/"
 BATCH_SIZE = 24
 
 # Danh sách file JSON cụ thể để import
 JSON_FILES = [
-    "crawled_books_truyen_thieu_nhi_page_19.json",
+    "crawled_books_sach_giao_khoa.json",
     # Thêm file khác nếu cần, ví dụ: "crawled_books_van_hoc.json"
 ]
 

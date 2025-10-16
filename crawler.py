@@ -31,8 +31,8 @@ HEADERS = {
     "Referer": "https://www.fahasa.com/",
 }
 
-CATEGORY_URL_TEMPLATE = "https://www.fahasa.com/sach-trong-nuoc/van-hoc-trong-nuoc/sach-to-mau-danh-cho-nguoi-lon.html?order=num_orders&limit=24&p={page}"
-MAX_PAGES_TO_CRAWL = 10
+CATEGORY_URL_TEMPLATE = "https://www.fahasa.com/sach-trong-nuoc/sach-hoc-ngoai-ngu/tieng-hoa.html?order=created_at&limit=24&p={page}"
+MAX_PAGES_TO_CRAWL = 2
 
 
 def get_random_headers():
@@ -311,7 +311,7 @@ def get_book_details(driver, book_url, initial_data):
             "price": price,
             "discount": discount,
             "img": images,
-            "category_name": "Tiểu thuyết",
+            "category_name": "Tiếng Hoa",
         }
     except Exception as e:
         print(f"Lỗi khi crawl chi tiết {book_url}: {e}")
@@ -347,7 +347,7 @@ def main():
 
     print("Đang khởi tạo ChromeDriver...")
     driver = webdriver.Chrome(
-        service=Service(r"E:\bookish-ai-pipeline\chromedriver.exe"),
+        service=Service(r"C:\Users\LENOVO\bookish-ai-pipeline\chromedriver.exe"),
         options=chrome_options,
     )
 
@@ -378,9 +378,7 @@ def main():
             time.sleep(random.uniform(3, 5))
 
         # Lưu kết quả trung gian sau mỗi trang
-        output_filename = (
-            f"crawled_books_sach_to_mau_danh_cho_nguoi_lon_page_{page}.json"
-        )
+        output_filename = f"crawled_books_tieng_hoa_page_{page}.json"
         with open(output_filename, "w", encoding="utf-8") as f:
             json.dump(all_books_data, f, indent=4, ensure_ascii=False)
         print(f"Đã lưu kết quả trung gian vào '{output_filename}'")
@@ -405,7 +403,7 @@ def main():
     driver.quit()
 
     # Lưu kết quả cuối cùng
-    final_output_filename = "crawled_books_sach_to_mau_danh_cho_nguoi_lon.json"
+    final_output_filename = "crawled_books_tieng_hoa.json"
     with open(final_output_filename, "w", encoding="utf-8") as f:
         json.dump(all_books_data, f, indent=4, ensure_ascii=False)
 
