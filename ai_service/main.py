@@ -1,7 +1,7 @@
 # main.py
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from services.search_service import semantic_search
+from services.search_service import hybrid_search
 
 app = FastAPI(title="AI Semantic Search API")
 
@@ -13,6 +13,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.post("/ai/search")
 async def search_books(request: Request):
     data = await request.json()
@@ -22,8 +23,9 @@ async def search_books(request: Request):
         return {"error": "Thiếu tham số query"}
 
     # Gọi hàm tìm kiếm ngữ nghĩa trong services/search_service.py
-    result_ids = semantic_search(query)
-    return {"product_ids": result_ids}
+    results = hybrid_search(query=query, top_k=10)
+    return {"product_ids": results}
+
 
 @app.get("/")
 def root():

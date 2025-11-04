@@ -1,3 +1,4 @@
+# create_vectors.py
 import os
 from pymongo import MongoClient
 from sentence_transformers import SentenceTransformer
@@ -5,6 +6,8 @@ import chromadb
 from chromadb.utils import embedding_functions
 from bson.objectid import ObjectId
 from dotenv import load_dotenv
+import re
+import unicodedata
 
 load_dotenv()
 
@@ -14,178 +17,139 @@ load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI")
 DATABASE_NAME = os.getenv("DATABASE_NAME", "knowledge_base")
 CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma_db")
-
-# Model embedding
-sbert_model = SentenceTransformer("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
-
-# Embedding function cho ChromaDB
-sbert_ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+MODEL_NAME = os.getenv(
+    "EMBEDDING_MODEL", "bkai-foundation-models/vietnamese-bi-encoder"
 )
+
+# Tải model (có thể cần GPU hoặc dùng CPU chậm hơn)
+print(f"Đang tải model embedding: {MODEL_NAME}")
+sbert_model = SentenceTransformer(MODEL_NAME)
+
+# Embedding function cho Chroma
+sbert_ef = embedding_functions.SentenceTransformerEmbeddingFunction(
+    model_name=MODEL_NAME
+)
+
+
+# ==========================
+# 2. CHUNKING
+# ==========================
+def chunk_text(text: str, max_tokens: int = 250, overlap: int = 50):
+    """
+    Chia văn bản thành các chunk nhỏ, giữ ngữ nghĩa.
+    250 token ~ 180-200 từ (tùy ngôn ngữ)
+    """
+    if not text or not isinstance(text, str):
+        return []
+
+    # Chuẩn hóa Unicode
+    text = unicodedata.normalize("NFC", text)
+    words = text.split()
+    chunks = []
+    i = 0
+    while i < len(words):
+        chunk_words = words[i : i + max_tokens]
+        chunk = " ".join(chunk_words)
+        chunks.append(chunk)
+        i += max_tokens - overlap
+        if i >= len(words) and chunk_words:
+            break
+    return chunks
+
 
 def get_embeddings(texts):
-    return sbert_model.encode(texts).tolist()
+    return sbert_model.encode(texts, normalize_embeddings=True).tolist()
+
 
 # ==========================
-# 2. KẾT NỐI MONGODB
+# 3. KẾT NỐI DB
 # ==========================
-try:
-    mongo_client = MongoClient(MONGO_URI)
-    db = mongo_client[DATABASE_NAME]
-    products_collection = db["products"]
-    newstrend_collection = db["newstrend"]
-    authors_collection = db["authors"]
-    publishers_collection = db["publishers"]
-    languages_collection = db["languages"]
-    formats_collection = db["formats"]
-    categories_collection = db["categories"]
-    print("✅ Connected to MongoDB successfully!")
-except Exception as e:
-    print(f"❌ Error connecting to MongoDB: {e}")
-    exit()
+mongo_client = MongoClient(MONGO_URI)
+db = mongo_client[DATABASE_NAME]
+products_collection = db["products"]
+categories_collection = db["categories"]
 
-# ==========================
-# 3. KHỞI TẠO CHROMADB
-# ==========================
-try:
-    chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
-    print(f"✅ Connected to ChromaDB at {CHROMA_PATH} successfully!")
-except Exception as e:
-    print(f"❌ Error connecting to ChromaDB: {e}")
-    exit()
-
-products_chroma_collection = chroma_client.get_or_create_collection(
-    name="product_vectors",
-    embedding_function=sbert_ef
-)
-newstrend_chroma_collection = chroma_client.get_or_create_collection(
-    name="newstrend_vectors",
-    embedding_function=sbert_ef
+chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
+product_collection = chroma_client.get_or_create_collection(
+    name="product_vectors", embedding_function=sbert_ef
 )
 
-# ==========================
-# 4. XỬ LÝ DỮ LIỆU SẢN PHẨM
-# ==========================
-def process_products_data():
-    print("\n🛍️ Processing products data...")
-    documents_to_add, ids_to_add, metadatas_to_add = [], [], []
-
-    all_products = products_collection.find({"isDeleted": {"$ne": True}})
-    for product in all_products:
-        name = product.get("name", "")
-        description = product.get("description", "")
-        price = product.get("price", 0)
-        discount = product.get("discount", 0)
-        publish_year = product.get("publishYear", "")
-        dimensions = product.get("dimensions", "")
-        weight = product.get("weight", "")
-        page = product.get("page", "")
-
-        # --- JOIN các bảng liên quan ---
-        def get_name_by_id(collection, oid):
-            if isinstance(oid, ObjectId):
-                doc = collection.find_one({"_id": oid})
-                if doc:
-                    return doc.get("name", "")
-            return ""
-
-        author_name = get_name_by_id(authors_collection, product.get("author"))
-        publisher_name = get_name_by_id(publishers_collection, product.get("publisher"))
-        language_name = get_name_by_id(languages_collection, product.get("language"))
-        format_name = get_name_by_id(formats_collection, product.get("format"))
-        category_name = get_name_by_id(categories_collection, product.get("category"))
-
-        # --- GHÉP THÀNH TEXT GIÀU NGỮ NGHĨA ---
-        combined_text = (
-            f"Tên sản phẩm: {name}. "
-            f"Tác giả: {author_name}. "
-            f"Thể loại: {category_name}. "
-            f"Nhà xuất bản: {publisher_name}. "
-            f"Ngôn ngữ: {language_name}. "
-            f"Định dạng: {format_name}. "
-            f"Năm xuất bản: {publish_year}. "
-            f"Trọng lượng: {weight} gram. "
-            f"Kích thước: {dimensions}. "
-            f"Số trang: {page}. "
-            f"Giá: {price} đồng. Giảm giá: {discount}%. "
-            f"Mô tả: {description}"
-        )
-
-        documents_to_add.append(combined_text)
-        ids_to_add.append(str(product["_id"]))
-        metadatas_to_add.append({
-            "mongo_id": str(product["_id"]),
-            "name": name,
-            "author": author_name,
-            "category": category_name,
-            "publisher": publisher_name,
-            "language": language_name,
-            "format": format_name,
-            "price": price
-        })
-
-    if documents_to_add:
-        print(f"Generating embeddings for {len(documents_to_add)} products...")
-        embeddings = get_embeddings(documents_to_add)
-        products_chroma_collection.add(
-            embeddings=embeddings,
-            documents=documents_to_add,
-            metadatas=metadatas_to_add,
-            ids=ids_to_add
-        )
-        print(f"✅ Added {len(documents_to_add)} product vectors to 'product_vectors'.")
-    else:
-        print("⚠️ No product documents found.")
 
 # ==========================
-# 5. XỬ LÝ DỮ LIỆU NEWSTREND
+# 4. XỬ LÝ SẢN PHẨM VỚI CHUNKING
 # ==========================
-def process_newstrend_data():
-    print("\n📰 Processing newstrend data...")
-    documents_to_add, ids_to_add, metadatas_to_add = [], [], []
+def process_products():
+    print("\nBắt đầu xử lý sản phẩm với CHUNKING + MODEL MỚI...")
 
-    all_news = newstrend_collection.find({})
-    for news_item in all_news:
-        title = news_item.get("title", "")
-        snippet = news_item.get("contentSnippet", "")
-        link = news_item.get("link", "")
-        iso_date = news_item.get("isoDate", "")
+    # Load danh mục
+    categories_map = {
+        str(cat["_id"]): cat.get("name", "")
+        for cat in categories_collection.find({}, {"name": 1})
+    }
 
-        combined_text = (
-            f"Tiêu đề tin tức: {title}. "
-            f"Tóm tắt: {snippet}. "
-            f"Ngày đăng: {iso_date}. "
-            f"Đường dẫn: {link}"
-        )
+    all_products = list(products_collection.find({"isDeleted": {"$ne": True}}))
+    print(f"Tìm thấy {len(all_products)} sản phẩm.")
 
-        documents_to_add.append(combined_text)
-        ids_to_add.append(str(news_item["_id"]))
-        metadatas_to_add.append({
-            "mongo_id": str(news_item["_id"]),
-            "title": title,
-            "link": link,
-            "date": iso_date
-        })
+    documents, ids, metadatas = [], [], []
 
-    if documents_to_add:
-        print(f"Generating embeddings for {len(documents_to_add)} news items...")
-        embeddings = get_embeddings(documents_to_add)
-        newstrend_chroma_collection.add(
-            embeddings=embeddings,
-            documents=documents_to_add,
-            metadatas=metadatas_to_add,
-            ids=ids_to_add
-        )
-        print(f"✅ Added {len(documents_to_add)} newstrend vectors to 'newstrend_vectors'.")
-    else:
-        print("⚠️ No newstrend documents found.")
+    for idx, product in enumerate(all_products):
+        name = product.get("name", "").strip()
+        description = product.get("description", "").strip()
+        category_id = str(product.get("category"))
+        category_name = categories_map.get(category_id, "")
+
+        # Tạo nội dung đầy đủ
+        full_text = f"{name}. Thể loại: {category_name}. {description}".strip()
+        if not full_text:
+            continue
+
+        # CHIA NHỎ THÀNH NHIỀU CHUNK
+        chunks = chunk_text(full_text, max_tokens=250, overlap=30)
+
+        for chunk_idx, chunk in enumerate(chunks):
+            chunk_id = f"{product['_id']}_chunk_{chunk_idx}"
+            documents.append(chunk)
+            ids.append(chunk_id)
+            metadatas.append(
+                {
+                    "source_id": str(product["_id"]),
+                    "name": name,
+                    "category": category_name,
+                    "chunk_index": chunk_idx,
+                    "type": "product",
+                    "source": "product",
+                }
+            )
+
+        if (idx + 1) % 100 == 0:
+            print(f"Đã xử lý {idx + 1}/{len(all_products)} sản phẩm...")
+
+    # Thêm vào Chroma theo batch
+    if documents:
+        batch_size = 1000
+        for i in range(0, len(documents), batch_size):
+            batch_docs = documents[i : i + batch_size]
+            batch_ids = ids[i : i + batch_size]
+            batch_meta = metadatas[i : i + batch_size]
+            batch_emb = get_embeddings(batch_docs)
+
+            product_collection.add(
+                embeddings=batch_emb,
+                documents=batch_docs,
+                metadatas=batch_meta,
+                ids=batch_ids,
+            )
+            print(
+                f"Đã thêm batch {i//batch_size + 1}/{(len(documents)-1)//batch_size + 1}"
+            )
+
+    print(f"Hoàn tất! Đã thêm {len(documents)} chunk vào ChromaDB.")
+
 
 # ==========================
-# 6. MAIN
+# 5. MAIN
 # ==========================
 if __name__ == "__main__":
-    process_products_data()
-    process_newstrend_data()
-    print("\n🎯 Vectorization process completed successfully!")
+    process_products()
     mongo_client.close()
-    print("🔒 MongoDB connection closed.")
+    print("Hoàn tất tạo vector với chunking + model mới!")

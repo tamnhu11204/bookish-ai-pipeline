@@ -31,8 +31,8 @@ HEADERS = {
     "Referer": "https://www.fahasa.com/",
 }
 
-CATEGORY_URL_TEMPLATE = "https://www.fahasa.com/sach-trong-nuoc/sach-hoc-ngoai-ngu/tieng-hoa.html?order=created_at&limit=24&p={page}"
-MAX_PAGES_TO_CRAWL = 2
+CATEGORY_URL_TEMPLATE = "https://www.fahasa.com/sach-trong-nuoc/tam-ly-ky-nang-song/ky-nang-song.html?order=num_orders&limit=24&p={page}"
+MAX_PAGES_TO_CRAWL = 50
 
 
 def get_random_headers():
@@ -247,13 +247,16 @@ def get_book_details(driver, book_url, initial_data):
 
         # Tìm tất cả link ảnh
         images = initial_data.get("img", [])
+
         lightgallery_div = soup.find("div", class_="lightgallery")
         if lightgallery_div:
-            image_links = lightgallery_div.find_all("a", class_="include-in-gallery")
-            for link in image_links:
-                href = link.get("href")
+            first_link = lightgallery_div.find("a", id="lightgallery-item-0")
+            if first_link:
+                href = first_link.get("href")
                 if href:
-                    images.append(href)
+                    images = [href]  # chỉ giữ đúng 1 ảnh đầu tiên
+
+        # loại bỏ trùng nếu cần (dù chỉ có 1 ảnh)
         images = list(set(images))
 
         # Tìm mô tả
@@ -311,7 +314,7 @@ def get_book_details(driver, book_url, initial_data):
             "price": price,
             "discount": discount,
             "img": images,
-            "category_name": "Tiếng Hoa",
+            "category_name": "kỹ năng sống",
         }
     except Exception as e:
         print(f"Lỗi khi crawl chi tiết {book_url}: {e}")
@@ -378,7 +381,7 @@ def main():
             time.sleep(random.uniform(3, 5))
 
         # Lưu kết quả trung gian sau mỗi trang
-        output_filename = f"crawled_books_tieng_hoa_page_{page}.json"
+        output_filename = f"crawled_books_ky_nang_song_page_{page}.json"
         with open(output_filename, "w", encoding="utf-8") as f:
             json.dump(all_books_data, f, indent=4, ensure_ascii=False)
         print(f"Đã lưu kết quả trung gian vào '{output_filename}'")
@@ -403,7 +406,7 @@ def main():
     driver.quit()
 
     # Lưu kết quả cuối cùng
-    final_output_filename = "crawled_books_tieng_hoa.json"
+    final_output_filename = "crawled_books_ky_nang_song.json"
     with open(final_output_filename, "w", encoding="utf-8") as f:
         json.dump(all_books_data, f, indent=4, ensure_ascii=False)
 

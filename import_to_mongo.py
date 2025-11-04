@@ -9,12 +9,12 @@ from pymongo.errors import ConnectionFailure, DuplicateKeyError
 # --- CẤU HÌNH ---
 MONGODB_URI = "mongodb+srv://tamnhu11204:nhunguyen11204@cluster0.kezkc.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 DB_NAME = "test"
-JSON_DIR = "./imported/"
+JSON_DIR = "./"
 BATCH_SIZE = 24
 
 # Danh sách file JSON cụ thể để import
 JSON_FILES = [
-    "crawled_books_sach_giao_khoa.json",
+    "crawled_books_tac_pham_kinh_dien__page_10.json",
     # Thêm file khác nếu cần, ví dụ: "crawled_books_van_hoc.json"
 ]
 
@@ -58,7 +58,6 @@ def create_slug(name):
 
 
 def get_or_create_ref(collection, name_field, name_value, prefix, extra_fields=None):
-    """Tìm hoặc tạo mới document với code sequential."""
     default_name = {
         "author_name": "Không có tác giả",
         "publisher_name": "Không có NXB",
@@ -69,6 +68,14 @@ def get_or_create_ref(collection, name_field, name_value, prefix, extra_fields=N
     }.get(name_field, "Không xác định")
     name_value = name_value or default_name
 
+    # RIÊNG CHO CATEGORIES: ưu tiên tìm theo slug
+    if collection.name == "categories" and extra_fields and "slug" in extra_fields:
+        slug = create_slug(name_value)
+        doc = collection.find_one({"slug": slug})
+        if doc:
+            return doc["_id"]
+
+    # Các collection khác: tìm theo name
     doc = collection.find_one({name_field: name_value})
     if doc:
         return doc["_id"]
@@ -78,7 +85,13 @@ def get_or_create_ref(collection, name_field, name_value, prefix, extra_fields=N
     try:
         result = collection.insert_one(new_doc)
         return result.inserted_id
-    except DuplicateKeyError:
+    except DuplicateKeyError as e:
+        # Nếu trùng slug, thử tìm lại theo slug
+        if "slug" in new_doc:
+            existing = collection.find_one({"slug": new_doc["slug"]})
+            if existing:
+                return existing["_id"]
+        # Nếu vẫn lỗi, tạo code mới và thử lại
         new_doc["code"] = get_next_code(collection, prefix)
         result = collection.insert_one(new_doc)
         return result.inserted_id

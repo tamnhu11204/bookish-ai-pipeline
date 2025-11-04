@@ -8,12 +8,12 @@ from pymongo.errors import ConnectionFailure
 # --- CẤU HÌNH ---
 MONGODB_URI = "mongodb+srv://tamnhu11204:nhunguyen11204@cluster0.kezkc.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 DB_NAME = "test"
-JSON_DIR = "./"
+JSON_DIR = "./imported/"
 BATCH_SIZE = 24
 
 # Danh sách file JSON cụ thể để import
 JSON_FILES = [
-    "crawled_books_kien_thuc_kns_cho_tre.json",
+    "crawled_books_tac_pham_kinh_dien__page_10.json",
     # Thêm file khác nếu cần, ví dụ: "crawled_books_van_hoc.json"
 ]
 
