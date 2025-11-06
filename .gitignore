@@ -5,3 +5,4 @@ ai_service/chroma_db/
 *.dll
 *.lib
 *.pyd
+.env
