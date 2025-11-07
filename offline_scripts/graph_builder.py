@@ -14,8 +14,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # ==========================
 # 1. IMPORT CÁC THÀNH PHẦN ĐÃ MODULE HÓA
 # ==========================
-from app.connect_db.mongo_client import products_collection
-from app.connect_db.vector_db import products_chroma_collection
+from app.connect_db.mongo_client import products
+from app.connect_db.vector_db import product_vectors
 
 # Tải các biến môi trường từ file .env
 load_dotenv()
@@ -41,7 +41,7 @@ def build_book_graph():
 
     # --- Bước 1: Lấy toàn bộ dữ liệu sách từ MongoDB (sử dụng collection đã import) ---
     print("Đang lấy dữ liệu sách từ MongoDB...")
-    all_books = list(products_collection.find({"isDeleted": {"$ne": True}}))
+    all_books = list(products.find({"isDeleted": {"$ne": True}}))
     if not all_books:
         print("Không tìm thấy sách nào trong MongoDB. Kết thúc.")
         return
@@ -87,7 +87,7 @@ def build_book_graph():
     )
 
     # Lấy ID của tất cả các chunk từ ChromaDB
-    chroma_results = products_chroma_collection.get(include=["metadatas"])
+    chroma_results = product_vectors.get(include=["metadatas"])
 
     # Gom các chunk lại theo source_id (product_id)
     product_chunks = {}
@@ -104,11 +104,11 @@ def build_book_graph():
 
         try:
             # Query bằng embedding của chunk đầu tiên của sách đó
-            query_embedding = products_chroma_collection.get(
+            query_embedding = product_vectors.get(
                 ids=product_chunks[book_id][0], include=["embeddings"]
             )["embeddings"][0]
 
-            results = products_chroma_collection.query(
+            results = product_vectors.query(
                 query_embeddings=[query_embedding],
                 n_results=SIMILARITY_TOP_K + 5,  # Lấy nhiều hơn để lọc
             )
@@ -152,7 +152,7 @@ def build_book_graph():
 
     with open(GRAPH_OUTPUT_FILE, "wb") as f:
         pickle.dump(G, f)
-    print("✅ Đã lưu graph thành công.")
+    print("Đã lưu graph thành công.")
 
     return G
 
@@ -162,4 +162,4 @@ def build_book_graph():
 # ==========================
 if __name__ == "__main__":
     build_book_graph()
-    print("\n🎉 Xây dựng graph hoàn tất!")
+    print("\nXây dựng graph hoàn tất!")
