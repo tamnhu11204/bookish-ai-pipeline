@@ -1,3 +1,4 @@
+# app/api/semantic_search.py
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.services.search_service import hybrid_search

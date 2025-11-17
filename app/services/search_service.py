@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 # ==========================
 # Import collection đã được khởi tạo sẵn và đặt bí danh `collection`
 # để không cần thay đổi code trong hàm `hybrid_search`
-from app.connect_db.vector_db import product_vectors as collection
+from app.connect_db.vector_db import search_vectors as collection
 
 # Tải biến môi trường chỉ để lấy tên model
 load_dotenv()

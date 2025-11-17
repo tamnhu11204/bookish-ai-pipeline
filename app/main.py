@@ -1,15 +1,14 @@
+# app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import dynamic_menu, semantic_search
+from offline_scripts import newstrend_vectorizer
+import schedule
+import threading
+import time
 
-# Khởi tạo ứng dụng FastAPI chính
-app = FastAPI(
-    title="Bookish AI Service",
-    description="Một API hợp nhất cho tìm kiếm và gợi ý sách.",
-    version="1.0.0",
-)
+app = FastAPI()
 
-# Cấu hình CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,14 +17,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Gắn các router từ các module khác
 app.include_router(semantic_search.router, prefix="/ai", tags=["Search"])
 app.include_router(dynamic_menu.router, prefix="/ai", tags=["Recommendations"])
+app.include_router(newstrend_vectorizer.router)  # THÊM DÒNG NÀY
 
 
-@app.get("/", tags=["Root"])
-def read_root():
-    return {"status": "ok", "service": "Bookish AI Service"}
+@app.get("/")
+def root():
+    return {"status": "ok"}
 
 
-# Để chạy: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+def run_scheduler():
+    from offline_scripts.cleanup_news import cleanup_old_news
+
+    cleanup_old_news()
+    while True:
+        schedule.run_pending()
+        time.sleep(3600)
+
+
+threading.Thread(target=run_scheduler, daemon=True).start()

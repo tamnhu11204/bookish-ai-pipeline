@@ -1,4 +1,4 @@
-# ai_service/app/core/schemas.py
+# app/core/schemas.py
 from pydantic import BaseModel
 from typing import List, Optional
 

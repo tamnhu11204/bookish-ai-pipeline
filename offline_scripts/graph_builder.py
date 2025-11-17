@@ -15,7 +15,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # 1. IMPORT CÁC THÀNH PHẦN ĐÃ MODULE HÓA
 # ==========================
 from app.connect_db.mongo_client import products
-from app.connect_db.vector_db import product_vectors
+from app.connect_db.vector_db import recommend_vectors
 
 # Tải các biến môi trường từ file .env
 load_dotenv()
@@ -87,7 +87,7 @@ def build_book_graph():
     )
 
     # Lấy ID của tất cả các chunk từ ChromaDB
-    chroma_results = product_vectors.get(include=["metadatas"])
+    chroma_results = recommend_vectors.get(include=["metadatas"])
 
     # Gom các chunk lại theo source_id (product_id)
     product_chunks = {}
@@ -104,11 +104,11 @@ def build_book_graph():
 
         try:
             # Query bằng embedding của chunk đầu tiên của sách đó
-            query_embedding = product_vectors.get(
+            query_embedding = recommend_vectors.get(
                 ids=product_chunks[book_id][0], include=["embeddings"]
             )["embeddings"][0]
 
-            results = product_vectors.query(
+            results = recommend_vectors.query(
                 query_embeddings=[query_embedding],
                 n_results=SIMILARITY_TOP_K + 5,  # Lấy nhiều hơn để lọc
             )

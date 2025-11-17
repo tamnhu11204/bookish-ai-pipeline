@@ -44,11 +44,7 @@ class UserHistoryTool(BaseTool):
                 {i["product_id"] for i in interactions if i["action"] == "add_to_cart"}
             ),
             "favorite": list(
-                {
-                    i["product_id"]
-                    for i in interactions
-                    if i["action"].startswith("favorite")
-                }
+                {i["product_id"] for i in interactions if i["action"] == "favorite_add"}
             ),
             "compared": list(
                 {i["product_id"] for i in interactions if i["action"] == "compare"}

@@ -1,4 +1,4 @@
-# ai_service/app/db/mongo_client.py
+# app/connect_db/mongo_client.py
 import os
 from pymongo import MongoClient
 from dotenv import load_dotenv

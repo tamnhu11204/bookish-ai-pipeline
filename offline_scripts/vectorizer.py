@@ -1,56 +1,40 @@
+# offline_scripts/product_vectorizer.py
 import os
 import sys
-from sentence_transformers import SentenceTransformer
-import chromadb
-from dotenv import load_dotenv
-import unicodedata
-from chromadb.utils import embedding_functions
 import re
+import unicodedata
+from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
 from typing import List
 
-# Thêm thư mục gốc (ai_service) vào Python Path để có thể import từ `app`
+# Thêm thư mục gốc vào Python Path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# ==========================
-# 1. IMPORT CÁC THÀNH PHẦN ĐÃ MODULE HÓA
-# ==========================
-# Import trực tiếp các collection đã được khởi tạo từ module db
+# Import DB
 from app.connect_db.mongo_client import products, categories
-from app.connect_db.vector_db import product_vectors as product_chroma_collection
-
-# Tải các biến môi trường
-load_dotenv()
-
-# ==========================
-# 2. CẤU HÌNH MODEL
-# ==========================
-MODEL_NAME = os.getenv("EMBEDDING_MODEL")
-CHROMA_PATH = os.getenv("CHROMA_PATH")
-PRODUCT_COLLECTION_NAME = os.getenv("PRODUCT_COLLECTION_NAME", "product_vectors")
-
-# *** THÊM MỚI: TẠO EMBEDDING FUNCTION ***
-# Đây là cách để "bảo" ChromaDB biết chúng ta đang dùng model nào
-sbert_ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name=MODEL_NAME
+from app.connect_db.vector_db import (
+    search_vectors,  # ← Collection cho Semantic Search (có chunking)
+    recommend_vectors,  # ← Collection cho Dynamic Menu (1 vector/sách)
+    get_model,
 )
 
-# Tải model (vẫn cần thiết vì chúng ta tự tính embedding)
-print(f"Đang tải model embedding: {MODEL_NAME}...")
-sbert_model = SentenceTransformer(MODEL_NAME)
-print("Model đã tải xong.")
+# Load env + model
+load_dotenv()
+MODEL_NAME = os.getenv("EMBEDDING_MODEL")
+sbert_model = get_model()
+
+print(f"Model đã tải: {MODEL_NAME}")
 
 
 # ==========================
-# 3. CÁC HÀM HỖ TRỢ (CHUNKING)
+# 1. CHUNKING CHO SEARCH (CHI TIẾT)
 # ==========================
 def chunk_text_semantic(
-    text: str,
-    max_tokens: int = 250,
-    overlap_tokens: int = 50,
-    model_name: str = "bkai-foundation-models/vietnamese-bi-encoder",
+    text: str, max_words: int = 200, overlap_words: int = 50
 ) -> List[str]:
     """
-    Chia văn bản theo câu, giữ ngữ nghĩa, không cắt ngang câu.
+    Chia mô tả sách thành nhiều chunk nhỏ (theo từ), giữ ngữ nghĩa, có overlap.
+    Dùng cho Semantic Search → tìm chính xác từng đoạn.
     """
     if not text or not isinstance(text, str):
         return []
@@ -60,58 +44,35 @@ def chunk_text_semantic(
     if not text:
         return []
 
-    # Tách câu tiếng Việt (dùng regex thông minh)
-    # Xử lý: dấu chấm, chấm than, hỏi, xuống dòng, v.v.
+    # Tách câu
     sentence_endings = r"[.!?]\s+|[.!?]$|\n+"
     sentences = re.split(sentence_endings, text)
     sentences = [s.strip() for s in sentences if s.strip()]
 
-    # Load tokenizer của model để đếm token chính xác
-    try:
-        from transformers import AutoTokenizer
-
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-    except:
-        print("Warning: Không load được tokenizer, dùng word count thay thế")
-        tokenizer = None
-
-    def count_tokens(text):
-        if tokenizer:
-            return len(tokenizer.encode(text, add_special_tokens=False))
-        else:
-            return len(text.split())  # fallback
-
     chunks = []
     current_chunk = []
-    current_tokens = 0
+    current_word_count = 0
 
     for sentence in sentences:
-        sentence_tokens = count_tokens(sentence + ".")  # + dấu chấm để sát thực tế
+        sentence_words = len(sentence.split())
 
-        # Nếu thêm câu này vượt quá giới hạn
-        if current_tokens + sentence_tokens > max_tokens and current_chunk:
-            # Đóng chunk hiện tại
+        # Nếu vượt giới hạn → đóng chunk
+        if current_word_count + sentence_words > max_words and current_chunk:
             chunk_text = " ".join(current_chunk).strip()
             if chunk_text:
                 chunks.append(chunk_text)
 
-            # Tính overlap: lấy N câu cuối của chunk cũ làm đầu chunk mới
-            overlap_text = ""
-            overlap_count = 0
-            for prev_sent in reversed(current_chunk):
-                if overlap_count + count_tokens(prev_sent) <= overlap_tokens:
-                    overlap_text = prev_sent + " " + overlap_text
-                    overlap_count += count_tokens(prev_sent)
-                else:
-                    break
-
-            # Bắt đầu chunk mới với overlap
-            current_chunk = [overlap_text.strip()] if overlap_text.strip() else []
-            current_tokens = count_tokens(overlap_text)
-
-        # Thêm câu vào chunk
-        current_chunk.append(sentence)
-        current_tokens += sentence_tokens
+            # Tạo overlap: lấy N từ cuối chunk cũ
+            overlap_text = (
+                " ".join(current_chunk[-overlap_words:])
+                if len(current_chunk) > overlap_words
+                else " ".join(current_chunk)
+            )
+            current_chunk = overlap_text.split()
+            current_word_count = len(current_chunk)
+        else:
+            current_chunk.extend(sentence.split())
+            current_word_count += sentence_words
 
     # Thêm chunk cuối
     if current_chunk:
@@ -119,93 +80,134 @@ def chunk_text_semantic(
         if final_chunk:
             chunks.append(final_chunk)
 
-    return chunks
-
-
-def get_embeddings(texts):
-    # Sử dụng normalize_embeddings=True để chuẩn hóa vector, giúp tính toán cosine similarity hiệu quả
-    return sbert_model.encode(texts, normalize_embeddings=True).tolist()
+    return [c for c in chunks if len(c.split()) > 20]  # loại chunk quá ngắn
 
 
 # ==========================
-# 4. LOGIC XỬ LÝ SẢN PHẨM
+# 2. TẠO TEXT CHO RECOMMEND (TỔNG HỢP)
+# ==========================
+def build_recommend_text(
+    name: str, author: str, category: str, description: str
+) -> str:
+    """
+    Tạo 1 đoạn văn ngắn gọn cho 1 vector / sách.
+    Dùng cho Dynamic Menu → gợi ý tổng thể.
+    """
+    desc_sentences = re.split(r"[.!?]\s+", description)
+    short_desc = ". ".join(desc_sentences[:3]).strip()
+    if len(desc_sentences) > 3:
+        short_desc += "."
+
+    return f"""
+    Tên sách: {name}
+    Tác giả: {author}
+    Thể loại: {category}
+    Mô tả: {short_desc}
+    """.strip()
+
+
+# ==========================
+# 3. XỬ LÝ SẢN PHẨM → 2 COLLECTION
 # ==========================
 def process_products():
-    print("\nBắt đầu xử lý và vector hóa sản phẩm...")
+    print("\nBắt đầu vector hóa sản phẩm...")
 
-    # Load danh mục từ collection đã import
+    # Cache category & author
     categories_map = {
-        str(cat["_id"]): cat.get("name", "") for cat in categories.find({}, {"name": 1})
+        str(c["_id"]): c.get("name", "") for c in categories.find({}, {"name": 1})
     }
-
-    # Lấy sản phẩm từ collection đã import
     all_products = list(products.find({"isDeleted": {"$ne": True}}))
-    print(f"Tìm thấy {len(all_products)} sản phẩm để xử lý.")
+    print(f"Tìm thấy {len(all_products)} sản phẩm.")
 
-    documents, ids, metadatas = [], [], []
+    # Dữ liệu cho 2 collection
+    search_docs, search_ids, search_meta = [], [], []
+    recommend_docs, recommend_ids, recommend_meta = [], [], []
 
     for idx, product in enumerate(all_products):
+        pid = str(product["_id"])
         name = product.get("name", "").strip()
         description = product.get("description", "").strip()
-        category_id = str(product.get("category"))
-        category_name = categories_map.get(category_id, "")
+        category_name = categories_map.get(str(product.get("category")), "")
+        author = str(product.get("author", ""))
 
-        full_text = f"{name}. Thể loại: {category_name}. {description}".strip()
-        if not full_text:
-            continue
-
-        chunks = chunk_text_semantic(
-            text=full_text, max_tokens=250, overlap_tokens=50, model_name=MODEL_NAME
-        )
-
-        for chunk_idx, chunk in enumerate(chunks):
-            chunk_id = f"{product['_id']}_chunk_{chunk_idx}"
-            documents.append(chunk)
-            ids.append(chunk_id)
-            metadatas.append(
+        # === 1. RECOMMEND: 1 vector / sách ===
+        recommend_text = build_recommend_text(name, author, category_name, description)
+        if recommend_text and len(recommend_text) > 20:
+            recommend_docs.append(recommend_text)
+            recommend_ids.append(pid)
+            recommend_meta.append(
                 {
-                    "source_id": str(product["_id"]),
+                    "source_id": pid,
                     "name": name,
+                    "author": author,
                     "category": category_name,
-                    "chunk_index": chunk_idx,
                     "type": "product",
                 }
             )
 
+        # === 2. SEARCH: nhiều chunk từ description ===
+        if description:
+            chunks = chunk_text_semantic(description)
+            for i, chunk in enumerate(chunks):
+                chunk_id = f"{pid}_chunk_{i}"
+                search_docs.append(chunk)
+                search_ids.append(chunk_id)
+                search_meta.append(
+                    {
+                        "source_id": pid,
+                        "chunk_index": i,
+                        "name": name,
+                        "author": author,
+                        "category": category_name,
+                        "type": "product_chunk",
+                    }
+                )
+
         if (idx + 1) % 100 == 0:
             print(f"Đã xử lý {idx + 1}/{len(all_products)} sản phẩm...")
 
-    if not documents:
-        print("Không có tài liệu nào để thêm vào ChromaDB.")
-        return
+    # === THÊM VÀO CHROMA ===
+    def add_to_collection(collection, docs, ids, metas, name):
+        if not docs:
+            print(f"Không có dữ liệu cho {name}")
+            return
+        print(f"Đang tạo embedding cho {len(docs)} {name}...")
+        embeddings = sbert_model.encode(docs, normalize_embeddings=True).tolist()
 
-    print(f"Chuẩn bị thêm {len(documents)} chunks vào ChromaDB...")
-    # Thêm vào Chroma theo batch
-    batch_size = 1000
-    for i in range(0, len(documents), batch_size):
-        batch_docs = documents[i : i + batch_size]
-        batch_ids = ids[i : i + batch_size]
-        batch_meta = metadatas[i : i + batch_size]
+        batch_size = 5000
+        for i in range(0, len(docs), batch_size):
+            batch_emb = embeddings[i : i + batch_size]
+            batch_docs = docs[i : i + batch_size]
+            batch_meta = metas[i : i + batch_size]
+            batch_ids = ids[i : i + batch_size]
 
-        print(f"Đang tạo embedding cho batch {i//batch_size + 1}...")
-        batch_emb = get_embeddings(batch_docs)
+            collection.add(
+                embeddings=batch_emb,
+                documents=batch_docs,
+                metadatas=batch_meta,
+                ids=batch_ids,
+            )
+            print(f"  → Batch {i//batch_size + 1}: {len(batch_docs)} records")
 
-        print(f"Đang thêm batch {i//batch_size + 1} vào ChromaDB...")
-        product_chroma_collection.add(
-            embeddings=batch_emb,
-            documents=batch_docs,
-            metadatas=batch_meta,
-            ids=batch_ids,
-        )
+        print(f"Hoàn tất thêm {len(docs)} vào {name}")
 
-    print(
-        f"Hoàn tất! Đã thêm {len(documents)} chunk vào ChromaDB tại đường dẫn: '{CHROMA_PATH}'"
+    # Thêm vào từng collection
+    add_to_collection(
+        recommend_vectors,
+        recommend_docs,
+        recommend_ids,
+        recommend_meta,
+        "recommend_vectors",
     )
+    add_to_collection(
+        search_vectors, search_docs, search_ids, search_meta, "search_vectors"
+    )
+
+    print("\nVector hóa sản phẩm HOÀN TẤT!")
 
 
 # ==========================
-# 5. ĐIỂM BẮT ĐẦU CHẠY SCRIPT
+# 4. CHẠY SCRIPT
 # ==========================
 if __name__ == "__main__":
     process_products()
-    print("\nVector hóa hoàn tất!")

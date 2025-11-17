@@ -1,97 +1,100 @@
 # app/chains/behavioral_chain.py
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_groq import ChatGroq
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate  # ← THÊM
 from app.tools.user_history import UserHistoryTool
 from app.tools.vector_aggregator import VectorAggregatorTool
 from app.tools.semantic_retriever import SemanticRetrieverTool
 from app.tools.graph_grouper import GraphGrouperTool
+from app.connect_db.mongo_client import products
+from app.core.schemas import ComboResponse
+from bson import ObjectId
 import os
-from dotenv import load_dotenv
+import json
 
-# THÊM 2 DÒNG
-from app.core.schemas import ComboResponse  # ← schema trên
-
-load_dotenv()
-
-history_tool = UserHistoryTool()
-vector_tool = VectorAggregatorTool()
-retriever_tool = SemanticRetrieverTool()
-grouper_tool = GraphGrouperTool()
-
-# THAY ĐỔI LLM → structured output
 llm = ChatGroq(
     model="llama-3.3-70b-versatile", temperature=0.7, api_key=os.getenv("GROQ_API_KEY")
 )
+structured_llm = llm.with_structured_output(ComboResponse)
 
-structured_llm = llm.with_structured_output(ComboResponse)  # ← BẮT BUỘC JSON
 
+def get_cat(pid):
+    doc = products.find_one({"_id": ObjectId(pid)}, {"category.name": 1})
+    return doc.get("category", {}).get("name", "") if doc else ""
+
+
+# ← DÙNG PromptTemplate
 prompt = PromptTemplate.from_template(
-    """
-Bạn là chuyên gia gợi ý sách cho Bookish.
-
-Dựa trên:
-- Lịch sử người dùng: {history}
-- Danh sách sách gợi ý: {recommendations}
-- Các nhóm sách: {groups}
-
-Hãy tạo đúng 3 combo sách.
-Mỗi combo có:
-- title: tiêu đề hấp dẫn
-- reason: giải thích tự nhiên, gần gũi
-- book_ids: 3-5 sách từ danh sách
-
-Trả về đúng JSON, không thêm chữ nào khác.
-"""
+    "Dựa trên lịch sử: {history}\n"
+    "Danh sách gợi ý: {recs}\n"
+    "Nhóm sách (JSON): {groups}\n\n"
+    "Tạo đúng 3 combo sách (title, reason, 3-5 book_ids)."
 )
 
-# Chain → dùng structured_llm thay llm
 chain = (
     {"user_id": RunnablePassthrough()}
-    | RunnableLambda(lambda x: print(f"[DEBUG] B1 - Input: {x['user_id']}") or x)
-    | {"raw_history": lambda x: history_tool.invoke(x["user_id"])}
-    | RunnableLambda(lambda x: print(f"[DEBUG] B1 - History: {x['raw_history']}") or x)
-    | {
-        "history": lambda x: x["raw_history"],
-        "product_ids": lambda x: list(
-            set(
-                x["raw_history"]["summary"].get("viewed", [])
-                + x["raw_history"]["summary"].get("cart", [])
-                + x["raw_history"]["summary"].get("favorite", [])
-                + x["raw_history"]["summary"].get("purchased", [])
-            )
-        ),
-    }
-    | RunnableLambda(lambda x: print(f"[DEBUG] B2 - IDs: {x['product_ids']}") or x)
-    | {
-        "user_vector": lambda x: (
-            vector_tool.invoke({"product_ids": x["product_ids"]})
-            if x["product_ids"]
-            else None
-        ),
-        "history": lambda x: x["history"],
-    }
+    | RunnableLambda(lambda x: {"history": UserHistoryTool().invoke(x["user_id"])})
     | RunnableLambda(
-        lambda x: print(f"[DEBUG] B3 - Vector: {'OK' if x['user_vector'] else 'NONE'}")
-        or x
+        lambda x: {
+            "ids": list(
+                {
+                    *x["history"]["summary"].get("viewed", []),
+                    *x["history"]["summary"].get("cart", []),
+                    *x["history"]["summary"].get("favorite", []),
+                    *x["history"]["summary"].get("purchased", []),
+                }
+            ),
+            "history": x["history"],
+        }
     )
-    | {
-        "recommendations": lambda x: (
-            retriever_tool.invoke({"user_vector": x["user_vector"], "top_k": 20})
-            if x["user_vector"]
-            else []
-        ),
-        "history": lambda x: x["history"],
-    }
     | RunnableLambda(
-        lambda x: print(f"[DEBUG] B4 - Recs: {len(x['recommendations'])}") or x
+        lambda x: {
+            "vector": (
+                VectorAggregatorTool().invoke({"product_ids": x["ids"]})
+                if x["ids"]
+                else None
+            ),
+            "history": x["history"],
+        }
     )
-    | {
-        "groups": lambda x: grouper_tool.invoke({"product_ids": x["recommendations"]}),
-        "recommendations": lambda x: x["recommendations"],
-        "history": lambda x: x["history"],
-    }
-    | RunnableLambda(lambda x: print(f"[DEBUG] B5 - Groups: {x['groups']}") or x)
-    | prompt
+    | RunnableLambda(
+        lambda x: {
+            "recs": (
+                SemanticRetrieverTool().invoke(
+                    {
+                        "user_vector": x["vector"],
+                        "top_k": 20,
+                        "exclude_ids": x["history"]["summary"].get("purchased", [])
+                        + x["history"]["summary"].get("viewed", [])[-5:],
+                        "category_boost": [
+                            get_cat(p)
+                            for p in (
+                                x["history"]["summary"].get("purchased", [])[:3]
+                                or x["history"]["summary"].get("favorite", [])[:3]
+                            )
+                        ],
+                    }
+                )
+                if x["vector"]
+                else []
+            ),
+            "history": x["history"],
+        }
+    )
+    | RunnableLambda(
+        lambda x: {
+            "raw_groups": GraphGrouperTool().invoke({"product_ids": x["recs"]}),
+            "recs": x["recs"],
+            "history": x["history"],
+        }
+    )
+    # ← CHUYỂN groups → str
+    | RunnableLambda(
+        lambda x: {
+            **x,
+            "groups": json.dumps(x["raw_groups"], ensure_ascii=False, indent=2),
+        }
+    )
+    | prompt  # ← DÙNG PromptTemplate
     | structured_llm
 )
