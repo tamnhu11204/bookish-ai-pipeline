@@ -1,4 +1,8 @@
 # app/api/news_vectorizer.py
+import sys
+import os
+# THÊM 3 DÒNG NÀY – CHỐNG LỖI 100%
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel
 from typing import List

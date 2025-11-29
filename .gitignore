@@ -7,3 +7,6 @@ data/
 *.lib
 *.pyd
 .env
+offline_scripts/chroma_db/
+offline_scripts/data/
+offline_scripts/__pycache__/

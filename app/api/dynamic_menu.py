@@ -3,7 +3,7 @@ import traceback
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.chains.behavioral_chain import chain as behavioral_chain
-from app.chains.collaborative_chain import collab_chain
+from app.chains.collaborative_chain import collaborative_chain
 from app.chains.trending_chain import trending_chain
 from app.chains.master_chain import master_chain
 from app.core.schemas import ComboResponse
@@ -34,7 +34,7 @@ def collaborative_endpoint(req: RecommendRequest):
     try:
         print(f"[API] Calling collaborative chain with user_id: {req.user_id}")
         # Truyền vào dict theo cấu trúc của chain
-        result = collab_chain.invoke({"user_id": req.user_id})
+        result = collaborative_chain.invoke({"user_id": req.user_id})
         return {"user_id": req.user_id, "combos": result.combos}
     except Exception as e:
         print(f"[ERROR] Collaborative failed: {e}")

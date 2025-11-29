@@ -1,14 +1,14 @@
 # app/chains/master_chain.py
 from langchain_core.runnables import RunnableParallel, RunnableLambda
 from app.chains.behavioral_chain import chain as behavioral_chain
-from app.chains.collaborative_chain import collab_chain
+from app.chains.collaborative_chain import collaborative_chain
 from app.chains.trending_chain import trending_chain
 from app.core.schemas import ComboResponse
 
 # 1. Chạy song song (Giữ nguyên)
 parallel = RunnableParallel(
     behavioral=behavioral_chain,
-    collaborative=collab_chain,
+    collaborative=collaborative_chain,
     trending=trending_chain,
 )
 
