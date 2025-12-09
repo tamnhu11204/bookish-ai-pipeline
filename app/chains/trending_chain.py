@@ -1,5 +1,6 @@
 # app/chains/trending_chain.py
-from langchain_core.runnables import RunnableLambda
+import time
+from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from app.tools.trending_news import TrendingNewsTool
@@ -7,62 +8,128 @@ from app.tools.semantic_retriever import SemanticRetrieverTool
 from app.connect_db.vector_db import get_model
 import os
 from app.core.schemas import ComboResponse
+from app.tools.graph_grouper import GraphGrouperTool
+import json
+from app.tools.cache import get_cached_groups
+from app.debug.debug_log import log_time
 
-# ... (phần khởi tạo không đổi) ...
 news_tool = TrendingNewsTool()
 retriever = SemanticRetrieverTool()
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
-    temperature=0.6,
+    model="llama-3.3-70b-versatile",  # MẠNH NHẤT, HIỂU TIẾNG VIỆT SIÊU TỐT
+    temperature=0.3,
+    max_tokens=600,
     api_key=os.getenv("GROQ_API_KEY"),
 )
 model = get_model()
 structured_llm = llm.with_structured_output(ComboResponse)
 
 
-# SỬA: Xóa phần "Ví dụ" khỏi prompt để tránh LLM sao chép.
 prompt = PromptTemplate.from_template(
     """
-Bạn là một chuyên gia gợi ý sách thông minh, chuyên tạo ra các combo sách hấp dẫn dựa trên các chủ đề đang thịnh hành.
+Bạn là chuyên gia curation sách hàng đầu Việt Nam.
 
-Dưới đây là các chủ đề đang hot trong 24 giờ qua:
-{topics}
+DỮ LIỆU ĐẦU VÀO:
+- Nhóm sách đã phân tích sẵn (BẮT BUỘC dùng nhóm này làm chủ đạo): 
+{groups}
 
-Dựa vào danh sách các ID sách liên quan được cung cấp: {book_ids}
+- Danh sách ID sách khả dụng (phải dùng ít nhất 90% từ đây): 
+{book_ids}
 
-**Yêu cầu của bạn là:**
-1.  Tạo ra chính xác 3 combo sách độc đáo.
-2.  Mỗi combo phải có một **tiêu đề (title)** thật ngắn gọn và thu hút (dưới 6 từ).
-3.  Mỗi combo phải có một **lý do gợi ý (reason)** tự nhiên, thuyết phục (1-2 câu).
-4.  Mỗi combo phải chứa từ **3 đến 5 ID sách** từ danh sách đã cho.
-5.  **QUAN TRỌNG:** Chỉ sử dụng các ID sách từ danh sách `{book_ids}` được cung cấp. Không được tự bịa ra ID.
-6.  Trả về kết quả dưới dạng một danh sách JSON (JSON list) các combo.
+YÊU CẦU KHÔNG ĐƯỢC PHÁ VỠ:
+→ Tạo ĐÚNG 2 combo
+→ Mỗi combo PHẢI CÓ ĐÚNG 5 sách (không hơn, không kém)
+→ Ưu tiên lấy nguyên 1 nhóm (5 sách từ cùng nhóm là đẹp nhất)
+→ Nếu nhóm nào <5 sách thì bổ sung thêm từ danh sách sao cho đủ 5
+→ Tiêu đề: 5-9 từ, gây tò mò hoặc chạm cảm xúc mạnh
+→ Lý do: ngắn gọn, tự nhiên, thuyết phục
+→ Tuyệt đối KHÔNG dùng từ: bán chạy, mới, nên đọc, phổ biến
+
+Context bổ trợ: {context}
+
+Trả về đúng format JSON sau, không thêm bất kỳ chữ nào khác:
+
+{{
+  "combos": [
+    {{
+      "title": "string",
+      "reason": "string",
+      "book_ids": ["id1", "id2", "id3", "id4", "id5"]
+    }},
+    {{
+      "title": "string",
+      "reason": "string",
+      "book_ids": ["id6", "id7", "id8", "id9", "id10"]
+    }}
+  ]]
+}}
 """
 )
 
+# ==================== TRENDING CHAIN HOÀN HẢO (DỰA TRÊN CODE CŨ CỦA BẠN) ====================
 trending_chain = (
-    {"raw": lambda _: news_tool.invoke({"top_k": 3})}
+    RunnablePassthrough()
+    | RunnableLambda(
+        lambda x: print(f"[DEBUG TREND] Bắt đầu lấy tin tức trending...") or x
+    )
+    | RunnableLambda(lambda x: {"raw": news_tool.invoke({"top_k": 5})})
+    | RunnableLambda(lambda x: print(f"[DEBUG TREND] Raw news: {x['raw']}") or x)
     | RunnableLambda(
         lambda x: {
-            "topics": "\n".join([f"- {t['topic']}" for t in x["raw"]]),
-            "vectors": [
-                model.encode(t["topic"], normalize_embeddings=True).tolist()
-                for t in x["raw"]
-            ],
+            "topics": (
+                "\n".join([f"- {t.get('topic', 'Chủ đề hot')}" for t in x["raw"]])
+                if x["raw"]
+                else "- Sách đang được quan tâm"
+            ),
+            "vectors": (
+                [
+                    model.encode(
+                        t.get("topic", "sách hay"), normalize_embeddings=True
+                    ).tolist()
+                    for t in x["raw"]
+                ]
+                if x["raw"]
+                else []
+            ),
         }
     )
     | RunnableLambda(
         lambda x: {
-            "topics": x["topics"],
+            **x,
             "book_ids": list(
-                set(  # Dùng set để loại bỏ các ID trùng lặp
+                set(
                     bid
                     for vec in x["vectors"]
                     for bid in retriever.invoke({"user_vector": vec, "top_k": 6})
                 )
-            )[:15],
+            )[
+                :20
+            ],  # Giới hạn 20 để nhanh
+        }
+    )
+    | RunnableLambda(
+        lambda x: print(f"[DEBUG TREND] Trending books: {len(x['book_ids'])} cuốn") or x
+    )
+    | RunnableLambda(
+        lambda x: {
+            **x,
+            "groups": (
+                get_cached_groups(x["book_ids"])
+                if x["book_ids"]
+                else [{"title": "Hot hôm nay", "books": x["book_ids"][:5]}]
+            ),
+            "context": x.get("topics", "Chủ đề đang hot hôm nay"),
+            "book_ids": ", ".join(x["book_ids"][:20]),
         }
     )
     | prompt
+    | RunnableLambda(
+        lambda x: (print(f"[DEBUG TRENDING] Gọi LLM lúc {time.time():.0f}"), x)[1]
+    )
     | structured_llm
+    | RunnableLambda(
+        lambda x: (print(f"[DEBUG TRENDING] LLM trả về lúc {time.time():.0f}"), x)[1]
+    )
 )
+
+__all__ = ["trending_chain"]

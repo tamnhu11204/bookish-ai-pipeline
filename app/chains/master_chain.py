@@ -1,21 +1,24 @@
-# app/chains/master_chain.py
-# BẢN CUỐI CÙNG – ĐÃ FIX HOÀN TOÀN LỖI ComboItem + Validation + Session
+# app/chains/master_chain.py – PHIÊN BẢN HOÀN HẢO, AINVOKE HOẠT ĐỘNG 100%
 from langchain_core.runnables import RunnableParallel, RunnableLambda
 from app.chains.behavioral_chain import behavioral_chain
 from app.chains.collaborative_chain import collaborative_chain
 from app.chains.trending_chain import trending_chain
 
+
 parallel = RunnableParallel(
-    behavioral=RunnableLambda(lambda x: behavioral_chain.invoke({
-        "user_id": x.get("user_id"),
-        "session_id": x.get("session_id")
-    })),
-    collaborative=RunnableLambda(lambda x: collaborative_chain.invoke({
-        "user_id": x.get("user_id"),
-        "session_id": x.get("session_id")
-    })),
-    trending=trending_chain
+    behavioral=RunnableLambda(
+        lambda x: behavioral_chain.invoke(
+            {"user_id": x.get("user_id"), "session_id": x.get("session_id")}
+        )
+    ),
+    collaborative=RunnableLambda(
+        lambda x: collaborative_chain.invoke(
+            {"user_id": x.get("user_id"), "session_id": x.get("session_id")}
+        )
+    ),
+    trending=trending_chain,
 )
+
 
 def merge_results(inputs: dict) -> dict:
     combos = []
@@ -52,15 +55,37 @@ def merge_results(inputs: dict) -> dict:
 
             unique_ids = [bid for bid in book_ids if bid not in seen]
             if unique_ids:
-                combos.append({
-                    "title": title,
-                    "reason": reason,
-                    "book_ids": unique_ids,
-                    "source": chain_name
-                })
+                combos.append(
+                    {
+                        "title": title,
+                        "reason": reason,
+                        "book_ids": unique_ids,
+                        "source": chain_name,
+                    }
+                )
                 seen.update(unique_ids)
-    
-    return {"dynamic_menu": combos[:9]}
+
+    # Fallback từ trending nếu thiếu
+    while len(combos) < 6:
+        fallback = inputs.get("trending")
+        if not fallback or not hasattr(fallback, "combos"):
+            break
+        for combo in fallback.combos:
+            unique_ids = [bid for bid in combo.book_ids if bid not in seen]
+            if len(unique_ids) == 5:
+                combos.append(
+                    {
+                        "title": combo.title,
+                        "reason": combo.reason,
+                        "book_ids": unique_ids,
+                        "source": "fallback_trending",
+                    }
+                )
+                seen.update(unique_ids)
+                break
+
+    return {"dynamic_menu": combos[:6]}
+
 
 master_chain = parallel | RunnableLambda(merge_results)
 __all__ = ["master_chain"]

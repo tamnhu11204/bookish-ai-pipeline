@@ -3,163 +3,148 @@ import sys
 import networkx as nx
 import pickle
 from itertools import combinations
+from bson import ObjectId
 from dotenv import load_dotenv
 
-# ==========================
-# 0. THIẾT LẬP PATH ĐỂ IMPORT
-# ==========================
-# Thêm thư mục gốc (ai_service) vào Python Path để có thể import từ `app`
+# Thêm đường dẫn gốc
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# ==========================
-# 1. IMPORT CÁC THÀNH PHẦN ĐÃ MODULE HÓA
-# ==========================
-from app.connect_db.mongo_client import products
+from app.connect_db.mongo_client import (
+    products,
+    categories,
+    authors,
+)  # THÊM authors nếu có, không thì bỏ
 from app.connect_db.vector_db import recommend_vectors
 
-# Tải các biến môi trường từ file .env
 load_dotenv()
 
-# ==========================
-# 2. CẤU HÌNH SCRIPT
-# ==========================
-# Lấy đường dẫn file output từ .env, có giá trị mặc định
 GRAPH_OUTPUT_FILE = os.getenv("GRAPH_OUTPUT_FILE", "./data/book_graph.gpickle")
-SIMILARITY_TOP_K = 5  # Số lượng sách tương đồng ngữ nghĩa cần tìm cho mỗi sách
+SIMILARITY_TOP_K = 6  # tăng lên 6 cho chắc
 
 
-# ==========================
-# 3. LOGIC XÂY DỰNG GRAPH
-# ==========================
+def resolve_name(ref, collection, field_name="name"):
+    """Chuyển ObjectId hoặc dict thành tên thật"""
+    if not ref:
+        return "Không rõ"
+    if isinstance(ref, dict):
+        return ref.get(field_name, "Không rõ")
+    if isinstance(ref, str) and len(ref) == 24:  # ObjectId hex
+        try:
+            doc = collection.find_one({"_id": ObjectId(ref)}, {field_name: 1})
+            return doc.get(field_name, "Không rõ") if doc else "Không rõ"
+        except:
+            return "Không rõ"
+    return str(ref)
+
+
 def build_book_graph():
-    """
-    Xây dựng một graph quan hệ sách bao gồm cả các mối quan hệ rõ ràng (metadata)
-    và các mối quan hệ tương đồng ngữ nghĩa (vector similarity).
-    """
-    print("\nBắt đầu xây dựng graph quan hệ sách...")
+    print("\nBẮT ĐẦU XÂY DỰNG GRAPH SÁCH – PHIÊN BẢN ĐỈNH CAO 2025")
     G = nx.Graph()
 
-    # --- Bước 1: Lấy toàn bộ dữ liệu sách từ MongoDB (sử dụng collection đã import) ---
-    print("Đang lấy dữ liệu sách từ MongoDB...")
+    print("Đang tải dữ liệu sách từ MongoDB...")
     all_books = list(products.find({"isDeleted": {"$ne": True}}))
     if not all_books:
-        print("Không tìm thấy sách nào trong MongoDB. Kết thúc.")
+        print("Không có sách nào!")
         return
 
-    author_map = {}
-    category_map = {}
-
-    print("Đang xử lý dữ liệu và thêm các node sách vào graph...")
+    print(f"Đang xử lý {len(all_books)} cuốn sách – thêm node + lấy tên thật...")
     for book in all_books:
         book_id = str(book["_id"])
+
+        # LẤY TÊN THẬT CỦA TÁC GIẢ & THỂ LOẠI
+        author_name = resolve_name(book.get("author"), products, "authorName")
+        if author_name == "Không rõ":
+            author_name = book.get("authorName", "Không rõ tác giả")
+
+        category_name = resolve_name(book.get("category"), categories, "name")
+        if category_name == "Không rõ":
+            category_name = book.get("categoryName", "Không rõ thể loại")
+
         G.add_node(
             book_id,
-            name=book.get("name", "N/A"),
-            author=str(book.get("author")),
-            category=str(book.get("category")),
+            name=book.get("name", "Không tên"),
+            author=author_name,
+            category=category_name,
         )
-        author_id = str(book.get("author"))
-        if author_id:
-            author_map.setdefault(author_id, []).append(book_id)
 
-        category_id = str(book.get("category"))
-        if category_id:
-            category_map.setdefault(category_id, []).append(book_id)
+    print(f"Đã thêm {G.number_of_nodes()} node với tên tác giả/thể loại chuẩn!")
 
-    print(f"Đã thêm {G.number_of_nodes()} node sách.")
+    # === THÊM CẠNH: CÙNG TÁC GIẢ ===
+    print("Thêm cạnh: cùng tác giả...")
+    author_groups = {}
+    for node, data in G.nodes(data=True):
+        author = data["author"]
+        author_groups.setdefault(author, []).append(node)
 
-    # --- Bước 2: Thêm các cạnh dựa trên quan hệ rõ ràng (cùng tác giả, thể loại) ---
-    print("Đang thêm các cạnh quan hệ rõ ràng (cùng tác giả, cùng thể loại)...")
-    for author_id, book_ids in author_map.items():
-        for book1, book2 in combinations(book_ids, 2):
-            G.add_edge(book1, book2, relationship="same_author")
+    for author, books in author_groups.items():
+        if len(books) >= 2:
+            for b1, b2 in combinations(books, 2):
+                G.add_edge(b1, b2, relationship="same_author", weight=1.0)
 
-    for category_id, book_ids in category_map.items():
-        for book1, book2 in combinations(book_ids, 2):
-            if not G.has_edge(book1, book2):
-                G.add_edge(book1, book2, relationship="same_category")
+    # === THÊM CẠNH: CÙNG THỂ LOẠI ===
+    print("Thêm cạnh: cùng thể loại...")
+    category_groups = {}
+    for node, data in G.nodes(data=True):
+        cat = data["category"]
+        category_groups.setdefault(cat, []).append(node)
 
-    print(f"Số cạnh hiện tại sau khi thêm quan hệ rõ ràng: {G.number_of_edges()}")
+    for cat, books in category_groups.items():
+        if len(books) >= 2:
+            for b1, b2 in combinations(books, 2):
+                if not G.has_edge(b1, b2):
+                    G.add_edge(b1, b2, relationship="same_category", weight=0.8)
 
-    # --- Bước 3: Thêm các cạnh dựa trên tương đồng ngữ nghĩa từ ChromaDB ---
-    print(
-        f"Đang thêm các cạnh tương đồng ngữ nghĩa từ ChromaDB (top {SIMILARITY_TOP_K})..."
-    )
-
-    # Lấy ID của tất cả các chunk từ ChromaDB
+    # === THÊM CẠNH: TƯƠNG ĐỒNG NGỮ NGHĨA ===
+    print(f"Thêm cạnh ngữ nghĩa (top {SIMILARITY_TOP_K})...")
     chroma_results = recommend_vectors.get(include=["metadatas"])
-
-    # Gom các chunk lại theo source_id (product_id)
     product_chunks = {}
     for i, chunk_id in enumerate(chroma_results["ids"]):
         source_id = chroma_results["metadatas"][i].get("source_id")
         if source_id:
             product_chunks.setdefault(source_id, []).append(chunk_id)
 
-    # Truy vấn sách tương đồng cho mỗi cuốn sách
-    product_ids_in_graph = list(G.nodes)
-    for i, book_id in enumerate(product_ids_in_graph):
+    count = 0
+    for book_id in G.nodes:
         if book_id not in product_chunks:
             continue
-
         try:
-            # Query bằng embedding của chunk đầu tiên của sách đó
-            query_embedding = recommend_vectors.get(
-                ids=product_chunks[book_id][0], include=["embeddings"]
+            emb = recommend_vectors.get(
+                ids=[product_chunks[book_id][0]], include=["embeddings"]
             )["embeddings"][0]
-
             results = recommend_vectors.query(
-                query_embeddings=[query_embedding],
-                n_results=SIMILARITY_TOP_K + 5,  # Lấy nhiều hơn để lọc
+                query_embeddings=[emb],
+                n_results=SIMILARITY_TOP_K + 10,
+                include=["metadatas", "distances"],
             )
-
-            # Xử lý kết quả trả về
-            similar_product_ids = set()
-            for j, distance in enumerate(results["distances"][0]):
-                meta = results["metadatas"][0][j]
-                similar_id = meta.get("source_id")
-
-                if similar_id and similar_id != book_id and similar_id in G:
-                    similar_product_ids.add((similar_id, distance))
-
-            # Thêm cạnh cho K sách gần nhất
-            sorted_similar = sorted(list(similar_product_ids), key=lambda x: x[1])
-            for similar_id, distance in sorted_similar[:SIMILARITY_TOP_K]:
-                similarity_score = 1 - distance
-                if similarity_score > 0 and not G.has_edge(book_id, similar_id):
-                    G.add_edge(
-                        book_id,
-                        similar_id,
-                        relationship="semantically_similar",
-                        weight=round(similarity_score, 4),
-                    )
+            for meta, dist in zip(results["metadatas"][0], results["distances"][0]):
+                sid = meta.get("source_id")
+                if sid and sid != book_id and sid in G and dist < 0.5:  # ngưỡng tốt
+                    score = round(1 - dist, 4)
+                    if not G.has_edge(book_id, sid):
+                        G.add_edge(
+                            book_id,
+                            sid,
+                            relationship="semantically_similar",
+                            weight=score,
+                        )
         except Exception as e:
-            print(f"[LỖI] Không thể truy vấn sách tương đồng cho {book_id}: {e}")
+            continue
 
-        if (i + 1) % 100 == 0:
-            print(f"  Đã xử lý {i + 1}/{len(product_ids_in_graph)} sách...")
+        count += 1
+        if count % 200 == 0:
+            print(f"  Đã xử lý {count}/{len(G.nodes)} sách ngữ nghĩa...")
 
-    print(
-        f"Xây dựng graph hoàn tất. Tổng số node: {G.number_of_nodes()}, Tổng số cạnh: {G.number_of_edges()}"
-    )
+    print(f"HOÀN TẤT! Graph có {G.number_of_nodes()} node, {G.number_of_edges()} cạnh")
 
-    # --- Bước 4: Lưu graph vào file ---
-    print(f"Đang lưu graph vào file: '{GRAPH_OUTPUT_FILE}'...")
-    # Tự động tạo thư mục chứa file nếu chưa tồn tại
-    output_dir = os.path.dirname(GRAPH_OUTPUT_FILE)
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
-
+    # Lưu file
+    os.makedirs(os.path.dirname(GRAPH_OUTPUT_FILE), exist_ok=True)
     with open(GRAPH_OUTPUT_FILE, "wb") as f:
         pickle.dump(G, f)
-    print("Đã lưu graph thành công.")
+    print(f"ĐÃ LƯU GRAPH TẠI: {GRAPH_OUTPUT_FILE}")
 
     return G
 
 
-# ==========================
-# 4. ĐIỂM BẮT ĐẦU CHẠY SCRIPT
-# ==========================
 if __name__ == "__main__":
     build_book_graph()
-    print("\nXây dựng graph hoàn tất!")
+    print("XONG! Giờ chạy master chain sẽ thấy combo đẹp như mơ!")

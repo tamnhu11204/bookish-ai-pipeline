@@ -1,13 +1,17 @@
 # app/tools/semantic_retriever.py
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
-from typing import Type, List
+from typing import Optional, Type, List
 from app.connect_db.vector_db import recommend_vectors
 
 
 class RetrieverInput(BaseModel):
-    user_vector: List[float]
-    top_k: int = Field(10)
+    user_vector: List[float] = Field(..., description="Vector người dùng")
+    top_k: int = Field(20, ge=1, le=100)
+    exclude_ids: Optional[List[str]] = Field(default_factory=list)
+    category_boost: Optional[List[str]] = Field(default_factory=list)
+
+    model_config = {"arbitrary_types_allowed": True}
 
 
 class SemanticRetrieverTool(BaseTool):

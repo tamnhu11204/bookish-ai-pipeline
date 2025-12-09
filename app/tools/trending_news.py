@@ -7,9 +7,9 @@ import numpy as np
 from sklearn.cluster import MiniBatchKMeans
 import os
 
-from app.connect_db.vector_db import news_vectors
+from app.connect_db.vector_db import news_vectors, get_model
 
-model = SentenceTransformer(os.getenv("EMBEDDING_MODEL"))
+model = get_model()
 
 
 # ← SCHEMA INPUT
