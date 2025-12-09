@@ -1,17 +1,21 @@
 # app/chains/master_chain.py
+# BẢN CUỐI CÙNG – ĐÃ FIX HOÀN TOÀN LỖI ComboItem + Validation + Session
 from langchain_core.runnables import RunnableParallel, RunnableLambda
-from app.chains.behavioral_chain import chain as behavioral_chain
+from app.chains.behavioral_chain import behavioral_chain
 from app.chains.collaborative_chain import collaborative_chain
 from app.chains.trending_chain import trending_chain
-from app.core.schemas import ComboResponse
 
-# 1. Chạy song song (Giữ nguyên)
 parallel = RunnableParallel(
-    behavioral=behavioral_chain,
-    collaborative=collaborative_chain,
-    trending=trending_chain,
+    behavioral=RunnableLambda(lambda x: behavioral_chain.invoke({
+        "user_id": x.get("user_id"),
+        "session_id": x.get("session_id")
+    })),
+    collaborative=RunnableLambda(lambda x: collaborative_chain.invoke({
+        "user_id": x.get("user_id"),
+        "session_id": x.get("session_id")
+    })),
+    trending=trending_chain
 )
-
 
 def merge_results(inputs: dict) -> dict:
     combos = []
@@ -19,23 +23,44 @@ def merge_results(inputs: dict) -> dict:
 
     for chain_name in ["behavioral", "collaborative", "trending"]:
         result = inputs.get(chain_name)
-        if not result or not hasattr(result, "combos"):
+        if not result:
             continue
 
-        for combo in result.combos:
-            unique_ids = [bid for bid in combo.book_ids if bid not in seen]
-            if unique_ids:
-                combos.append(
-                    {
-                        "title": combo.title,
-                        "reason": combo.reason,
-                        "book_ids": unique_ids,
-                        "source": chain_name,
-                    }
-                )
-                seen.update(unique_ids)
+        # SIÊU QUAN TRỌNG: XỬ LÝ CẢ OBJECT Pydantic VÀ DICT
+        if hasattr(result, "combos"):
+            combo_list = result.combos
+        elif isinstance(result, list):
+            combo_list = result
+        elif isinstance(result, dict) and "combos" in result:
+            combo_list = result["combos"]
+        else:
+            combo_list = []
 
+        for combo in combo_list:
+            # XỬ LÝ CẢ OBJECT VÀ DICT
+            if hasattr(combo, "dict"):  # là Pydantic object
+                combo_dict = combo.dict()
+            else:
+                combo_dict = combo if isinstance(combo, dict) else {}
+
+            title = combo_dict.get("title", "Gợi ý đặc biệt")
+            reason = combo_dict.get("reason", "Dành riêng cho bạn")
+            book_ids = combo_dict.get("book_ids", [])
+
+            if not book_ids:
+                continue
+
+            unique_ids = [bid for bid in book_ids if bid not in seen]
+            if unique_ids:
+                combos.append({
+                    "title": title,
+                    "reason": reason,
+                    "book_ids": unique_ids,
+                    "source": chain_name
+                })
+                seen.update(unique_ids)
+    
     return {"dynamic_menu": combos[:9]}
 
-
 master_chain = parallel | RunnableLambda(merge_results)
+__all__ = ["master_chain"]

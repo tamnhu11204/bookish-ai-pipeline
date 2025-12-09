@@ -6,6 +6,7 @@ from offline_scripts import newstrend_vectorizer
 import schedule
 import threading
 import time
+from offline_scripts.update_user_similarity import update_user_similarity_job
 
 app = FastAPI()
 

@@ -1,5 +1,4 @@
 # app/chains/collaborative_chain.py
-
 from langchain_core.runnables import RunnableLambda, RunnableBranch, RunnableParallel
 from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
@@ -52,13 +51,24 @@ Hãy tạo đúng 3 combo cực kỳ hấp dẫn với:
 Trả về JSON list duy nhất.
 """)
 
-# ==================== HÀM LẤY GỢI Ý TỪ USER GIỐNG ====================
+# ==================== HÀM LẤY GỢI Ý TỪ USER GIỐNG (CÓ HỖ TRỢ session_id) ====================
 def get_recommendations(x: dict) -> dict:
-    user_id = x["user_id"]
+    user_id = x.get("user_id")
+    session_id = x.get("session_id")
     summary = x["history"]["summary"]
     
-    already_interacted = set(summary.get("purchased", [])) | set(summary.get("viewed", []))
-    similar_user_ids = similarity_tool.invoke(user_id)[:40]
+    # Loại sách đã tương tác
+    already_interacted = (
+        set(summary.get("purchased", [])) |
+        set(summary.get("viewed", []))
+    )
+    
+    # Tìm user giống nhất – tool đã hỗ trợ cả user_id và session_id
+    similar_user_ids = similarity_tool.invoke({
+        "user_id": user_id,
+        "session_id": session_id
+    })[:40]
+    
     rec_ids = set()
 
     for sim_uid in similar_user_ids:
@@ -84,42 +94,39 @@ def get_recommendations(x: dict) -> dict:
         "rec_ids": ", ".join(list(rec_ids)[:30]) if rec_ids else get_top_selling_book_ids()
     }
 
-# ==================== CHAIN THẬT (khi có đủ lịch sử) ====================
+# ==================== CHAIN THẬT ====================
 real_chain = (
-    {"user_id": lambda x: x}
+    # Input có thể là {"user_id": "..."} hoặc {"session_id": "..."}
+    RunnableLambda(lambda x: {
+        "user_id": x.get("user_id"),
+        "session_id": x.get("session_id")
+    })
     | RunnableLambda(lambda x: {
-        "user_id": x["user_id"],
-        "history": history_tool.invoke(x["user_id"])
-      })
+        "history": UserHistoryTool().invoke({
+            "user_id": x["user_id"],
+            "session_id": x["session_id"]
+        })
+    })
     | RunnableLambda(lambda x: {**x, **get_recommendations(x)})
     | prompt
     | structured_llm
 )
 
-# ==================== CHAIN FALLBACK (user mới) ====================
-fallback_chain = (
-    {"user_id": lambda x: x}
-    | RunnableLambda(lambda x: {
-        "purchased_count": 0, "viewed_count": 0, "favorite_count": 0,
-        "compared_count": 0, "cart_count": 0,
-        "rec_ids": get_top_selling_book_ids(10)
-      })
-    | prompt
-    | structured_llm
-)
+# ==================== FALLBACK CHO USER MỚI HOẶC KHÁCH VÃNG LAI CHƯA CÓ DỮ LIỆU ====================
+fallback_chain = RunnableLambda(lambda x: {
+    "purchased_count": 0, "viewed_count": 0, "favorite_count": 0,
+    "compared_count": 0, "cart_count": 0,
+    "rec_ids": get_top_selling_book_ids(10)
+}) | prompt | structured_llm
 
-# ==================== CHAIN CUỐI: TỰ ĐỘNG CHỌN ĐÚNG ĐƯỜNG  ====================
+# ==================== CHAIN CUỐI – TỰ ĐỘNG CHỌN ====================
 collaborative_chain = (
-    {"user_id": lambda x: x}
-    | RunnableParallel({
-        "user_id": lambda x: x["user_id"],
-        "history": lambda x: history_tool.invoke(x["user_id"])
-      })
+    RunnableLambda(lambda x: x)
     | RunnableBranch(
-        # Điều kiện kiểm tra: đã có history rồi → mới được truy cập summary
+        # Nếu có ít nhất 3 tương tác (dù là user hay session)
         (lambda x: len(
-            x["history"]["summary"].get("purchased", []) +
-            x["history"]["summary"].get("viewed", [])
+            x.get("history", {}).get("summary", {}).get("purchased", []) +
+            x.get("history", {}).get("summary", {}).get("viewed", [])
         ) >= 3, real_chain),
         fallback_chain
     )
