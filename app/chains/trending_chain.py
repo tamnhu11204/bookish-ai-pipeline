@@ -16,10 +16,7 @@ from app.debug.debug_log import log_time
 news_tool = TrendingNewsTool()
 retriever = SemanticRetrieverTool()
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile",  # MẠNH NHẤT, HIỂU TIẾNG VIỆT SIÊU TỐT
-    temperature=0.3,
-    max_tokens=600,
-    api_key=os.getenv("GROQ_API_KEY"),
+    model="llama-3.3-70b-versatile", temperature=0.7, api_key=os.getenv("GROQ_API_KEY")
 )
 model = get_model()
 structured_llm = llm.with_structured_output(ComboResponse)
@@ -33,12 +30,12 @@ DỮ LIỆU ĐẦU VÀO:
 - Nhóm sách đã phân tích sẵn (BẮT BUỘC dùng nhóm này làm chủ đạo): 
 {groups}
 
-- Danh sách ID sách khả dụng (phải dùng ít nhất 90% từ đây): 
+- Danh sách ID sách khả dụng (phải dùng ít nhất 90% từ đây, KHÔNG BỊA ID): 
 {book_ids}
 
 YÊU CẦU KHÔNG ĐƯỢC PHÁ VỠ:
 → Tạo ĐÚNG 2 combo
-→ Mỗi combo PHẢI CÓ ĐÚNG 5 sách (không hơn, không kém)
+→ Mỗi combo PHẢI CÓ ĐÚNG 5 sách
 → Ưu tiên lấy nguyên 1 nhóm (5 sách từ cùng nhóm là đẹp nhất)
 → Nếu nhóm nào <5 sách thì bổ sung thêm từ danh sách sao cho đủ 5
 → Tiêu đề: 5-9 từ, gây tò mò hoặc chạm cảm xúc mạnh
@@ -47,20 +44,12 @@ YÊU CẦU KHÔNG ĐƯỢC PHÁ VỠ:
 
 Context bổ trợ: {context}
 
-Trả về đúng format JSON sau, không thêm bất kỳ chữ nào khác:
+TRẢ VỀ ĐÚNG JSON SAU, KHÔNG THÊM CHỮ NÀO:
 
 {{
   "combos": [
-    {{
-      "title": "string",
-      "reason": "string",
-      "book_ids": ["id1", "id2", "id3", "id4", "id5"]
-    }},
-    {{
-      "title": "string",
-      "reason": "string",
-      "book_ids": ["id6", "id7", "id8", "id9", "id10"]
-    }}
+    {{"title": "string", "reason": "string", "book_ids": {book_ids_example}}},
+    {{"title": "string", "reason": "string", "book_ids": {book_ids_example}}}
   ]]
 }}
 """
@@ -112,14 +101,17 @@ trending_chain = (
     )
     | RunnableLambda(
         lambda x: {
+            "groups": get_cached_groups(x["book_ids"]),
+            "book_ids": ", ".join(x["book_ids"]),
+            "context": x.get("topics", "Sách đang hot theo tin tức hôm nay"),
+        }
+    )
+    | RunnableLambda(
+        lambda x: {
             **x,
-            "groups": (
-                get_cached_groups(x["book_ids"])
-                if x["book_ids"]
-                else [{"title": "Hot hôm nay", "books": x["book_ids"][:5]}]
-            ),
-            "context": x.get("topics", "Chủ đề đang hot hôm nay"),
-            "book_ids": ", ".join(x["book_ids"][:20]),
+            "book_ids_example": [
+                bid.strip() for bid in x["book_ids"].split(",") if bid.strip()
+            ][:15],
         }
     )
     | prompt

@@ -3,7 +3,7 @@ import traceback
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from app.chains.behavioral_chain import chain as behavioral_chain
+from app.chains.behavioral_chain import behavioral_chain
 from app.chains.collaborative_chain import collaborative_chain
 from app.chains.trending_chain import trending_chain
 from app.chains.master_chain import master_chain
@@ -62,24 +62,14 @@ def trending_endpoint():
 
 # ENDPOINT CHÍNH – MASTER CHAIN (ĐÃ SỬA HOÀN HẢO)
 @router.post("/recommend/master")
-def master_endpoint(req: RecommendRequest):
+async def master_endpoint(req: RecommendRequest):  # async rồi nhé!
     try:
-        print(
-            f"[MASTER API] Nhận được: user_id={req.user_id}, session_id={req.session_id}"
+        result = await master_chain.ainvoke(
+            {"user_id": req.user_id, "session_id": req.session_id}  # DÙNG AINVOKE!
         )
-
-        # GỌI MASTER CHAIN VỚI CẢ user_id VÀ session_id
-        result = master_chain.invoke(
-            {
-                "user_id": req.user_id,  # có thể là None
-                "session_id": req.session_id,  # có thể là None
-            }
-        )
-        return result
-
+        return result if isinstance(result, dict) else result.dict()
     except Exception as e:
         import traceback
 
-        print(f"[MASTER SERVICE] Lỗi: {e}")
         traceback.print_exc()
-        return {"dynamic_menu": [], "error": str(e)}
+        return {"dynamic_menu": [], "error": "Tạm thời bận"}

@@ -81,7 +81,7 @@ class VerboseCallback(BaseCallbackHandler):
 # CHẠY TỪNG BƯỚC
 if __name__ == "__main__":
     print("BẮT ĐẦU DEBUG TOÀN BỘ HỆ THỐNG".center(80, "#"))
-    # debug_behavioral()
+    debug_behavioral()
     # debug_collaborative()
     # debug_trending()
-    debug_master()
+    # debug_master()

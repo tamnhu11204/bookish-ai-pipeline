@@ -1,10 +1,12 @@
 # app/tools/graph_grouper.py
+from bson import ObjectId
 import networkx as nx
 import pickle
 import os
 from langchain.tools import BaseTool
 from pydantic import BaseModel
 from typing import List, Dict
+from app.connect_db.mongo_client import products
 
 GRAPH_FILE = os.getenv("GRAPH_OUTPUT_FILE", "./data/book_graph.gpickle")
 
@@ -20,61 +22,62 @@ class GraphGrouperTool(BaseTool):
     )
 
     def _run(self, product_ids: List[str]) -> List[Dict]:
+        if not product_ids:
+            return [{"title": "Khám phá thêm", "books": []}]
+
         if not os.path.exists(GRAPH_FILE):
-            return [{"title": "Gợi ý đặc biệt", "books": product_ids[:5]}]
+            return [{"title": "Sách hay hôm nay", "books": product_ids[:5]}]
 
         with open(GRAPH_FILE, "rb") as f:
             G = pickle.load(f)
 
-        if not product_ids:
-            return []
-
         subgraph = G.subgraph(product_ids).copy()
+        if subgraph.number_of_nodes() == 0:
+            return [{"title": "Gợi ý đặc biệt", "books": product_ids[:5]}]
+
         groups = {}
 
-        # 1. Nhóm theo tác giả (mạnh nhất)
+        # 1. Nhóm theo TÁC GIẢ (lấy tên thật)
+        author_to_name = {}
         for node in subgraph.nodes():
-            author = subgraph.nodes[node].get("author", "Khác")
-            if author and author != "Khác":
-                key = f"Sách của {author}"
-                groups.setdefault(key, []).append(node)
+            author_id = subgraph.nodes[node].get("author", "")
+            if author_id and author_id != "Không rõ":
+                if author_id not in author_to_name:
+                    # Lấy tên thật từ MongoDB (cache để nhanh)
+                    doc = products.find_one(
+                        {"_id": ObjectId(author_id)}, {"authorName": 1}
+                    )
+                    author_to_name[author_id] = (
+                        doc.get("authorName", "Nhiều tác giả")
+                        if doc
+                        else "Nhiều tác giả"
+                    )
+                author_name = author_to_name[author_id]
+                groups.setdefault(f"Sách của {author_name}", []).append(node)
 
-        # 2. Nhóm theo thể loại (nếu chưa có trong nhóm tác giả)
-        for node in subgraph.nodes():
+        # 2. Nhóm theo THỂ LOẠI
+        for node in list(subgraph.nodes()):
             if any(node in books for books in groups.values()):
                 continue
-            cat = subgraph.nodes[node].get("category", "Khác")
-            if cat and cat != "Khác":
-                key = f"Thể loại {cat}"
-                groups.setdefault(key, []).append(node)
+            cat = subgraph.nodes[node].get("category", "")
+            if cat and cat != "Không rõ":
+                groups.setdefault(f"Thể loại {cat}", []).append(node)
 
-        # 3. Nhóm semantic connected components (cực mạnh!)
-        for cc in nx.connected_components(subgraph):
-            component = list(cc)
-            if len(component) < 3:
-                continue
-            if not any(component[0] in books for books in groups.values()):
-                sample_names = [
-                    subgraph.nodes[n].get("name", "")[:20]
-                    for n in component[:2]
-                    if subgraph.nodes[n].get("name")
-                ]
-                title = " & ".join(sample_names) + (
-                    " và những cuốn tương tự"
-                    if sample_names
-                    else "Sách liên quan chặt chẽ"
-                )
-                groups[title] = component[:5]
+        # 3. Nhóm semantic (giữ nguyên)
+        used = set()
+        for title, books in list(groups.items()):
+            used.update(books[:5])
+            groups[title] = books[:5]
 
-        # 4. Fallback nhóm còn sót
-        used = {book for books in groups.values() for book in books}
-        remain = [pid for pid in product_ids if pid not in used][:5]
+        remain = [n for n in product_ids if n not in used][:10]
         if remain:
-            groups["Đang hot cùng sở thích của bạn"] = remain
+            groups["Đang hot cùng sở thích"] = remain[:5]
 
-        # Format kết quả
-        result = []
-        for title, books in groups.items():
-            if len(books) >= 2:
-                result.append({"title": title, "books": books[:5]})
-        return result[:4] or [{"title": "Khám phá ngay", "books": product_ids[:5]}]
+        result = [
+            {"title": title, "books": books}
+            for title, books in groups.items()
+            if len(books) >= 2
+        ]
+        return result or [
+            {"title": "Gợi ý dành riêng cho bạn", "books": product_ids[:5]}
+        ]

@@ -61,12 +61,12 @@ DỮ LIỆU ĐẦU VÀO:
 - Nhóm sách đã phân tích sẵn (BẮT BUỘC dùng nhóm này làm chủ đạo): 
 {groups}
 
-- Danh sách ID sách khả dụng (phải dùng ít nhất 90% từ đây): 
+- Danh sách ID sách khả dụng (phải dùng ít nhất 90% từ đây, KHÔNG BỊA ID): 
 {book_ids}
 
 YÊU CẦU KHÔNG ĐƯỢC PHÁ VỠ:
 → Tạo ĐÚNG 2 combo
-→ Mỗi combo PHẢI CÓ ĐÚNG 5 sách (không hơn, không kém)
+→ Mỗi combo PHẢI CÓ ĐÚNG 5 sách
 → Ưu tiên lấy nguyên 1 nhóm (5 sách từ cùng nhóm là đẹp nhất)
 → Nếu nhóm nào <5 sách thì bổ sung thêm từ danh sách sao cho đủ 5
 → Tiêu đề: 5-9 từ, gây tò mò hoặc chạm cảm xúc mạnh
@@ -75,20 +75,12 @@ YÊU CẦU KHÔNG ĐƯỢC PHÁ VỠ:
 
 Context bổ trợ: {context}
 
-Trả về đúng format JSON sau, không thêm bất kỳ chữ nào khác:
+TRẢ VỀ ĐÚNG JSON SAU, KHÔNG THÊM CHỮ NÀO:
 
 {{
   "combos": [
-    {{
-      "title": "string",
-      "reason": "string",
-      "book_ids": ["id1", "id2", "id3", "id4", "id5"]
-    }},
-    {{
-      "title": "string",
-      "reason": "string",
-      "book_ids": ["id6", "id7", "id8", "id9", "id10"]
-    }}
+    {{"title": "string", "reason": "string", "book_ids": {book_ids_example}}},
+    {{"title": "string", "reason": "string", "book_ids": {book_ids_example}}}
   ]]
 }}
 """
@@ -183,26 +175,53 @@ fallback_chain = (
     | structured_llm
 )
 
-# ==================== CHAIN CUỐI: TỰ ĐỘNG CHỌN ĐÚNG ĐƯỜNG  ====================
+# ==================== CHAIN CUỐI: GIỮ NGUYÊN LOGIC CỦA BẠN, CHỈ FIX FORMAT ĐẦU VÀO PROMPT ====================
 collaborative_chain = (
-    {"user_id": lambda x: x}
-    | RunnableParallel(
-        {
-            "user_id": lambda x: x["user_id"],
-            "history": lambda x: history_tool.invoke(x["user_id"]),
-        }
+    # Bước 1: Lấy history
+    RunnableLambda(
+        lambda x: {"user_id": x.get("user_id"), "session_id": x.get("session_id")}
     )
+    | RunnableLambda(lambda x: {**x, "history": history_tool.invoke(x)})
+    # Bước 2: Nếu có ít nhất 3 tương tác → dùng real_chain (giống người dùng)
     | RunnableBranch(
-        # Điều kiện kiểm tra: đã có history rồi → mới được truy cập summary
         (
             lambda x: len(
                 x["history"]["summary"].get("purchased", [])
                 + x["history"]["summary"].get("viewed", [])
             )
             >= 3,
-            real_chain,
+            # ĐÚNG – DÙNG REAL CHAIN CỦA BẠN (có get_recommendations từ user giống)
+            RunnableLambda(lambda x: {**x, **get_recommendations(x)})
+            | RunnableLambda(
+                lambda x: {
+                    "groups": get_cached_groups(
+                        [pid for pid in x["rec_ids"].split(",") if pid]
+                    ),
+                    "book_ids": x["rec_ids"],
+                    "context": f"Độc giả giống bạn (đã mua {x.get('purchased_count',0)} cuốn) đang rất thích những sách này",
+                }
+            )
+            | prompt
+            | structured_llm,
         ),
-        fallback_chain,
+        # SAI – DÙNG FALLBACK (user mới)
+        RunnableLambda(
+            lambda x: {
+                "groups": get_cached_groups([]),
+                "book_ids": get_top_selling_book_ids(20),
+                "context": "Gợi ý dành riêng cho người mới bắt đầu hành trình đọc sách",
+            }
+        )
+        | RunnableLambda(
+            lambda x: {
+                **x,
+                "book_ids_example": [
+                    bid.strip() for bid in x["book_ids"].split(",") if bid.strip()
+                ][:15],
+            }
+        )
+        | prompt
+        | structured_llm,
     )
 )
 
