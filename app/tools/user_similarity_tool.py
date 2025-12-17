@@ -7,12 +7,17 @@ from pydantic import Field  # ← quan trọng
 
 PATH = "./offline_scripts/data/user_similarity.json"
 
+
 class UserSimilarityTool(BaseTool):
     name: str = "find_similar_users"
-    description: str = "Trả về danh sách user_id (str) có hành vi giống nhất với user hiện tại"
-    
+    description: str = (
+        "Trả về danh sách user_id (str) có hành vi giống nhất với user hiện tại"
+    )
+
     # KHAI BÁO TRƯỚC thuộc tính sẽ dùng
-    data: dict = Field(default_factory=dict, exclude=True)  # exclude=True để không serialize
+    data: dict = Field(
+        default_factory=dict, exclude=True
+    )  # exclude=True để không serialize
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -27,7 +32,11 @@ class UserSimilarityTool(BaseTool):
                 return {}
         return {}
 
-    def _run(self, user_id: str, top_k: int = 50) -> List[str]:
+    def _run(
+        self, user_id: str = None, session_id: str = None, top_k: int = 50
+    ) -> List[str]:
+        if not user_id:  # nếu không có user_id (guest)
+            return []  # hoặc trả về list mặc định
         if user_id not in self.data:
             return []
         neighbors = self.data[user_id]

@@ -79,8 +79,8 @@ TRẢ VỀ ĐÚNG JSON SAU, KHÔNG THÊM CHỮ NÀO:
 
 {{
   "combos": [
-    {{"title": "string", "reason": "string", "book_ids": {book_ids_example}}},
-    {{"title": "string", "reason": "string", "book_ids": {book_ids_example}}}
+    {{"title": "string", "reason": "string", "book_ids": ["id1","id2","id3","id4","id5"]}},
+    {{"title": "string", "reason": "string", "book_ids": ["id6","id7","id8","id9","id10"]}}
   ]]
 }}
 """
@@ -210,14 +210,6 @@ collaborative_chain = (
                 "groups": get_cached_groups([]),
                 "book_ids": get_top_selling_book_ids(20),
                 "context": "Gợi ý dành riêng cho người mới bắt đầu hành trình đọc sách",
-            }
-        )
-        | RunnableLambda(
-            lambda x: {
-                **x,
-                "book_ids_example": [
-                    bid.strip() for bid in x["book_ids"].split(",") if bid.strip()
-                ][:15],
             }
         )
         | prompt

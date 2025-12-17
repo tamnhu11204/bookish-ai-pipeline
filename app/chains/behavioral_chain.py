@@ -36,14 +36,14 @@ DỮ LIỆU ĐẦU VÀO:
 - Nhóm sách đã phân tích sẵn (BẮT BUỘC dùng nhóm này làm chủ đạo): 
 {groups}
 
-- Danh sách ID sách khả dụng (phải dùng ít nhất 90% từ đây, KHÔNG ĐƯỢC BỊA ID): 
+- Danh sách ID sách khả dụng (phải dùng ít nhất 90% từ đây, KHÔNG BỊA ID): 
 {book_ids}
 
 YÊU CẦU KHÔNG ĐƯỢC PHÁ VỠ:
 → Tạo ĐÚNG 2 combo
 → Mỗi combo PHẢI CÓ ĐÚNG 5 sách
 → Ưu tiên lấy nguyên 1 nhóm (5 sách từ cùng nhóm là đẹp nhất)
-→ Nếu nhóm nào <5 sách thì bổ sung thêm từ danh sách
+→ Nếu nhóm nào <5 sách thì bổ sung thêm từ danh sách sao cho đủ 5
 → Tiêu đề: 5-9 từ, gây tò mò hoặc chạm cảm xúc mạnh
 → Lý do: ngắn gọn, tự nhiên, thuyết phục
 → Tuyệt đối KHÔNG dùng từ: bán chạy, mới, nên đọc, phổ biến
@@ -54,8 +54,8 @@ TRẢ VỀ ĐÚNG JSON SAU, KHÔNG THÊM CHỮ NÀO:
 
 {{
   "combos": [
-    {{"title": "string", "reason": "string", "book_ids": {book_ids_example}}},
-    {{"title": "string", "reason": "string", "book_ids": {book_ids_example}}}
+    {{"title": "string", "reason": "string", "book_ids": ["id1","id2","id3","id4","id5"]}},
+    {{"title": "string", "reason": "string", "book_ids": ["id6","id7","id8","id9","id10"]}}
   ]]
 }}
 """
@@ -135,7 +135,6 @@ behavioral_chain = (
                     else ""
                 )
             ),
-            "book_ids_example": x["recs"][:15],
         }
     )
     | prompt

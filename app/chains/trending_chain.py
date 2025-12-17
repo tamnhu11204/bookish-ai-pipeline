@@ -48,8 +48,8 @@ TRẢ VỀ ĐÚNG JSON SAU, KHÔNG THÊM CHỮ NÀO:
 
 {{
   "combos": [
-    {{"title": "string", "reason": "string", "book_ids": {book_ids_example}}},
-    {{"title": "string", "reason": "string", "book_ids": {book_ids_example}}}
+    {{"title": "string", "reason": "string", "book_ids": ["id1","id2","id3","id4","id5"]}},
+    {{"title": "string", "reason": "string", "book_ids": ["id6","id7","id8","id9","id10"]}}
   ]]
 }}
 """
@@ -104,14 +104,6 @@ trending_chain = (
             "groups": get_cached_groups(x["book_ids"]),
             "book_ids": ", ".join(x["book_ids"]),
             "context": x.get("topics", "Sách đang hot theo tin tức hôm nay"),
-        }
-    )
-    | RunnableLambda(
-        lambda x: {
-            **x,
-            "book_ids_example": [
-                bid.strip() for bid in x["book_ids"].split(",") if bid.strip()
-            ][:15],
         }
     )
     | prompt
