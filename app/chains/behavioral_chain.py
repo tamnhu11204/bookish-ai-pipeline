@@ -104,6 +104,21 @@ def process_recommendations(x: dict) -> dict:
     return {**x, "recs": recs, "cats": cats}
 
 
+def get_weighted_ids(summary):
+    ids = []
+    # Purchase: lặp 5 lần → trọng số 5
+    ids.extend(summary.get("purchased", []) * 5)
+    # Favorite: lặp 3 lần
+    ids.extend(summary.get("favorite", []) * 3)
+    # Cart: lặp 2 lần
+    ids.extend(summary.get("cart", []) * 2)
+    # View: lặp 1 lần
+    ids.extend(summary.get("viewed", []))  # hoặc *1 nếu muốn rõ ràng
+    # So sánh (nếu có)
+    ids.extend(summary.get("compared", []) * 1)
+    return list(set(ids))
+
+
 behavioral_chain = (
     RunnableLambda(
         lambda x: {"user_id": x.get("user_id"), "session_id": x.get("session_id")}
@@ -112,14 +127,7 @@ behavioral_chain = (
     | RunnableLambda(
         lambda x: {
             **x,
-            "ids": list(
-                {
-                    *x["history"]["summary"].get("viewed", []),
-                    *x["history"]["summary"].get("cart", []),
-                    *x["history"]["summary"].get("favorite", []),
-                    *x["history"]["summary"].get("purchased", []),
-                }
-            ),
+            "ids": get_weighted_ids(x["history"]["summary"]),
         }
     )
     | RunnableLambda(process_recommendations)
