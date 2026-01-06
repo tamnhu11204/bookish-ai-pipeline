@@ -158,5 +158,50 @@ queries_with_ground_truth = {
 }
 
 if __name__ == "__main__":
-    measure_latency(num_requests=30)  # Đo 30 lần để ổn định
+    measure_latency(num_requests=30)
     measure_search_precision_recall(queries_with_ground_truth)
+
+# import os
+# from pymongo import MongoClient
+
+# # Cấu hình kết nối
+# MONGO_URI = "mongodb+srv://tamnhu11204:nhunguyen11204@cluster0.kezkc.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+# DATABASE_NAME = "test"  # Hoặc tên DB của bạn
+# DEFAULT_IMG = "https://s.gr-assets.com/assets/nophoto/user/u_200x266-e183445fd1a1b5cc7075bb1cf7043306.png"
+
+
+# def update_author_images():
+#     try:
+#         client = MongoClient(MONGO_URI)
+#         db = client[DATABASE_NAME]
+#         collection = db["suppliers"]
+
+#         # Bộ lọc tìm các trường rỗng/null
+#         query = {
+#             "$or": [
+#                 {"img": {"$exists": False}},
+#                 {"img": None},
+#                 {"img": ""},
+#                 {"img": "null"},
+#             ]
+#         }
+
+#         # Dữ liệu cập nhật
+#         new_values = {"$set": {"img": DEFAULT_IMG}}
+
+#         # Thực hiện update
+#         result = collection.update_many(query, new_values)
+
+#         print(f"--- KẾT QUẢ UPDATE ---")
+#         print(f"Số bản ghi tìm thấy: {result.matched_count}")
+#         print(f"Số bản ghi đã cập nhật: {result.modified_count}")
+#         print(f"----------------------")
+
+#     except Exception as e:
+#         print(f"Lỗi: {e}")
+#     finally:
+#         client.close()
+
+
+# if __name__ == "__main__":
+#     update_author_images()

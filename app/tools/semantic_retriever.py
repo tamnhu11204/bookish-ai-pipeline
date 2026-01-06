@@ -32,29 +32,48 @@ class SemanticRetrieverTool(BaseTool):
         # === XÂY DỰNG WHERE CLAUSE AN TOÀN ===
         where_clauses = []
 
-        # 1. Loại bỏ sách đã mua/xem
+        # 1. Loại bỏ sách đã mua/xem (Sử dụng $nin)
         if exclude_ids:
-            where_clauses.append({"source_id": {"$nin": exclude_ids}})
+            # Lọc bỏ các ID không hợp lệ nếu có
+            clean_exclude = [str(i) for i in exclude_ids if i]
+            if clean_exclude:
+                where_clauses.append({"source_id": {"$nin": clean_exclude}})
 
-        # 2. Ưu tiên thể loại
+        # 2. Ưu tiên thể loại (Sử dụng $in)
         if category_boost:
-            where_clauses.append({"category": {"$in": category_boost}})
+            # Lọc bỏ giá trị "Không rõ" để tránh query nhiễu
+            clean_cats = [c for c in category_boost if c and c != "Không rõ"]
+            if clean_cats:
+                where_clauses.append({"category": {"$in": clean_cats}})
 
-        # Ghép điều kiện bằng $and
-        where = {"$and": where_clauses} if where_clauses else None
+        # === FIX LỖI $and PHẢI CÓ ÍT NHẤT 2 PHẦN TỬ ===
+        where = None
+        if len(where_clauses) > 1:
+            where = {"$and": where_clauses}
+        elif len(where_clauses) == 1:
+            where = where_clauses[0]  # Truyền trực tiếp điều kiện duy nhất
 
         # === QUERY ===
         try:
+            # n_results nên lấy dư ra một chút để trừ hao sau khi lọc trùng
+            fetch_count = top_k + len(exclude_ids)
+            if fetch_count > 100:
+                fetch_count = 100  # Giới hạn của Chroma thường là 100
+
             res = recommend_vectors.query(
                 query_embeddings=[user_vector],
-                n_results=top_k + len(exclude_ids),  # bù thêm
-                where=where,  # ← chỉ truyền nếu không None
+                n_results=fetch_count,
+                where=where,
                 include=["metadatas", "distances"],
             )
 
+            if not res or not res.get("metadatas") or len(res["metadatas"]) == 0:
+                return []
+
             results = []
             seen = set()
-            for meta, dist in zip(res["metadatas"][0], res["distances"][0]):
+            # Lọc lại một lần nữa ở code để đảm bảo an toàn tuyệt đối
+            for meta in res["metadatas"][0]:
                 sid = meta.get("source_id")
                 if sid and sid not in exclude_ids and sid not in seen:
                     results.append(sid)
@@ -64,5 +83,8 @@ class SemanticRetrieverTool(BaseTool):
             return results
 
         except Exception as e:
-            print(f"[ERROR] Query failed: {e}")
+            # Log lỗi chi tiết để debug nhưng không làm sập hệ thống
+            print(f"[ERROR] SemanticRetrieverTool Query failed: {e}")
+            # Trong trường hợp lỗi query (ví dụ metadata không tồn tại),
+            # trả về list rỗng để chain có thể dùng fallback
             return []
