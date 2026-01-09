@@ -27,6 +27,34 @@ def get_cat(pid: str) -> str:
     except:
         return ""
 
+# ================= NEW: HIGH ENGAGEMENT (COLD START) =================
+def get_trending_engagement_ids(limit: int = 30) -> list:
+    """
+    Lấy danh sách ID sách có tương tác cao (View, Favorite, Star) 
+    nhưng không thuần túy là bán chạy nhất để tránh trùng với Collaborative Chain.
+    """
+    pipeline = [
+        {"$match": {"stock": {"$gt": 0}, "isDeleted": False}},
+        {
+            "$addFields": {
+                "engagement_score": { 
+                    "$add": [
+                        {"$ifNull": ["$view", 0]}, 
+                        {"$multiply": [{"$ifNull": ["$favorite", 0]}, 4]}, # Yêu thích được ưu tiên
+                        {"$multiply": [{"$ifNull": ["$star", 0]}, 2]}      # Điểm đánh giá
+                    ]
+                }
+            }
+        },
+        {"$sort": {"engagement_score": -1}}, 
+        {"$limit": limit * 2}, # Lấy dư ra để bốc ngẫu nhiên
+        {"$sample": {"size": limit}} 
+    ]
+    try:
+        docs = list(products.aggregate(pipeline))
+        return [str(d["_id"]) for d in docs]
+    except:
+        return []
 
 prompt = PromptTemplate.from_template(
     """
@@ -99,7 +127,7 @@ def process_recommendations(x: dict) -> dict:
 
     # Fallback nếu không có kết quả
     if not recs:
-        recs = ids[:10]
+        recs = get_trending_engagement_ids(40)
 
     return {**x, "recs": recs, "cats": cats}
 
